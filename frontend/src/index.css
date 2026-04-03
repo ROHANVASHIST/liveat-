@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 20% 98%; /* Very light grey/white */
+    --foreground: 222 47% 11%; /* Charcoal */
+    --card: 0 0% 100%; /* Pure white */
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 221 83% 53%; /* Bright Blue (#1d4ed8) */
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222 47% 11.2%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222 47% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+    --radius: 1.25rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body, html {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Redesign for clean, modern look */
+.brutal-card {
+  @apply rounded-[2rem] border border-black/[0.04] bg-white shadow-[0_8px_30px_rgb(0,0,0,0.04)] transition-all duration-300;
+}
+
+.brutal-btn {
+  @apply rounded-2xl bg-primary text-white font-bold transition-all duration-300 hover:opacity-90 active:scale-95 flex items-center justify-center;
+}
+
+.glass-nav {
+  @apply bg-white/70 backdrop-blur-xl border-b border-black/[0.04] sticky top-0 z-50;
+}
+
+/* Premium Typography */
+.gradient-text {
+  @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-blue-400;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-black/[0.05] rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-black/[0.1];
+}
+
+/* Layout overrides to clean up old brutalist hacks */
+.border-2, .border-4 {
+  @apply border border-black/[0.08] !important;
+}
+
+.shadow-current {
+  @apply shadow-2xl shadow-blue-500/10 !important;
+}
+
+/* Sidebar Specifics */
+.sidebar-item-active {
+  @apply bg-primary/5 text-primary border-r-4 border-primary rounded-none !important;
+}
+
+/* Animations */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.5s ease-out forwards;
+}
