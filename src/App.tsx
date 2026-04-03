@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ChatWelcome, ChatRoom, ChatList, UserProfile, AnalyticsDashboard } from './components/ui';
+import { ChatWelcome, ChatRoom, ChatList, UserProfile, AnalyticsDashboard, InstallPrompt } from './components/ui';
 import { Button } from './components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './components/ui/dialog';
 import { Input } from './components/ui/input';
@@ -14,6 +14,10 @@ const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
 );
+
+const API_BASE_URL = import.meta.env.VITE_BACKEND_URL 
+  ? (import.meta.env.VITE_BACKEND_URL.startsWith('http') ? import.meta.env.VITE_BACKEND_URL : `https://${import.meta.env.VITE_BACKEND_URL}`)
+  : '';
 
 interface Message {
   id: string;
@@ -79,9 +83,9 @@ function App() {
   const loadData = useCallback(async () => {
     try {
       const [roomsRes, usersRes, analyticsRes] = await Promise.all([
-        fetch('/api/rooms'),
-        fetch('/api/users'),
-        fetch('/api/analytics')
+        fetch(`${API_BASE_URL}/api/rooms`),
+        fetch(`${API_BASE_URL}/api/users`),
+        fetch(`${API_BASE_URL}/api/analytics`)
       ]);
 
       if (roomsRes.ok) {
@@ -135,7 +139,7 @@ function App() {
 
     const checkBackendSession = async () => {
       try {
-        const response = await fetch('/api/auth/user', {
+        const response = await fetch(`${API_BASE_URL}/api/auth/user`, {
           credentials: 'include'
         });
         if (response.ok) {
@@ -172,7 +176,7 @@ function App() {
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut();
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+      await fetch(`${API_BASE_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
       setCurrentUser('');
       setCurrentUserId('');
       setIsConnected(false);
@@ -185,8 +189,9 @@ function App() {
   useEffect(() => {
     if (!currentUser || !isConnected) return;
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.hostname}:3000`;
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || `${window.location.hostname}:3000`;
+    const protocol = window.location.protocol === 'https:' || backendUrl.includes(':443') ? 'wss:' : 'ws:';
+    const wsUrl = backendUrl.startsWith('ws') ? backendUrl : `${protocol}//${backendUrl}`;
     const socket = new WebSocket(wsUrl);
 
     socket.onopen = () => {
@@ -281,7 +286,7 @@ function App() {
         reader.onloadend = async () => {
           try {
             const base64Data = reader.result as string;
-            const response = await fetch('/api/upload/base64', {
+            const response = await fetch(`${API_BASE_URL}/api/upload/base64`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -393,11 +398,11 @@ function App() {
   };
 
   const handleGoogleLogin = () => {
-    window.location.href = '/api/auth/google';
+    window.location.href = `${API_BASE_URL}/api/auth/google`;
   };
 
   const handleEmailAuth = async (email: string, password: string, name: string, isSignup: boolean) => {
-    const url = isSignup ? '/api/auth/signup' : '/api/auth/signin';
+    const url = isSignup ? `${API_BASE_URL}/api/auth/signup` : `${API_BASE_URL}/api/auth/signin`;
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -517,7 +522,7 @@ function App() {
             }} 
             onUpdate={async (data) => {
               try {
-                const res = await fetch('/api/auth/user', {
+                const res = await fetch(`${API_BASE_URL}/api/auth/user`, {
                   method: 'PATCH',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(data),
@@ -601,6 +606,8 @@ function App() {
           </div>
         </DialogContent>
       </Dialog>
+      
+      <InstallPrompt />
     </div>
   );
 }

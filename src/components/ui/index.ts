@@ -10,3 +10,4 @@ export * from './chat';
 export { UserProfile } from './user-profile';
 export { AppIcon } from './app-icon';
 export { AnalyticsDashboard } from './analytics-dashboard';
+export { InstallPrompt } from './install-prompt';
