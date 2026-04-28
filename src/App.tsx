@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ChatWelcome, ChatRoom, ChatList, UserProfile, AnalyticsDashboard, InstallPrompt } from './components/ui';
+import { ChatWelcome, ChatRoom, ChatList, UserProfile, AnalyticsDashboard, InstallPrompt, CommandPalette } from './components/ui';
 import { Button } from './components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './components/ui/dialog';
 import { Input } from './components/ui/input';
@@ -9,6 +9,8 @@ import {
 import { createClient } from '@supabase/supabase-js';
 import { cn } from './lib/utils';
 import { Avatar, AvatarFallback, AvatarImage } from './components/ui/avatar';
+import { polishText, summarizeChat, generateAIResponse } from './lib/ai';
+import { encryptMessage, decryptMessage } from './lib/encryption';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -31,6 +33,7 @@ interface Message {
   mediaUrl?: string;
   status?: 'sent' | 'delivered' | 'read';
   isPinned?: boolean;
+  reactions?: { emoji: string; userId: string; userName?: string }[];
 }
 
 interface ChatUser {
@@ -72,13 +75,51 @@ function App() {
   const [newRoomName, setNewRoomName] = useState('');
   const [newRoomDesc, setNewRoomDesc] = useState('');
   const [newContactName, setNewContactName] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [analytics, setAnalytics] = useState<any>(null);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [currentSentiment, setCurrentSentiment] = useState<'calm' | 'ai' | 'warning' | 'error'>('calm');
+  const [isPolishing, setIsPolishing] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [theme, setTheme] = useState<'black' | 'light'>(() => (localStorage.getItem('concierge-theme') as 'black' | 'light') || 'black');
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('concierge-theme', theme);
+  }, [theme]);
+
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setIsCommandPaletteOpen(prev => !prev);
+      }
+    };
+    document.addEventListener('keydown', down);
+    return () => document.removeEventListener('keydown', down);
+  }, []);
+
+  const analyzeSentiment = (text: string) => {
+    const lowerText = text.toLowerCase();
+    if (lowerText.length < 5) return;
+    if (lowerText.includes('error') || lowerText.includes('failed') || lowerText.includes('broken') || lowerText.includes('stop')) {
+      setCurrentSentiment('error');
+    } else if (lowerText.includes('warn') || lowerText.includes('wait') || lowerText.includes('slow')) {
+      setCurrentSentiment('warning');
+    } else if (lowerText.includes('ai') || lowerText.includes('agent') || lowerText.includes('node') || lowerText.includes('concierge')) {
+      setCurrentSentiment('ai');
+    } else {
+      setCurrentSentiment('calm');
+    }
+  };
+
+
 
   const loadData = useCallback(async () => {
     try {
@@ -101,13 +142,22 @@ function App() {
 
       if (usersRes.ok) {
         const data = await usersRes.json();
-        setUsers(data.map((user: any) => ({
+        const mappedUsers = data.map((user: any) => ({
           id: user.id,
           name: user.name,
           avatar: user.avatar,
           status: user.status || 'offline',
           email: user.email,
-        })));
+        })).filter((u: any) => u.id !== 'ai-concierge-node');
+
+        mappedUsers.unshift({
+           id: 'ai-concierge-node',
+           name: 'Concierge Core',
+           avatar: 'https://cdn-icons-png.flaticon.com/512/8649/8649307.png',
+           status: 'online',
+        });
+
+        setUsers(mappedUsers);
       }
 
       if (analyticsRes.ok) {
@@ -129,7 +179,7 @@ function App() {
     const checkSupabaseSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        setCurrentUser(session.user.user_metadata?.name || session.user.email?.split('@')[0] || '');
+        setCurrentUser(session.user.user_metadata?.name || session.user.email?.split('@')?.[0] || '');
         setCurrentUserEmail(session.user.email || '');
         setCurrentUserId(session.user.id);
         setCurrentUserAvatar(session.user.user_metadata?.avatar_url || '');
@@ -155,12 +205,26 @@ function App() {
       }
     };
 
-    checkSupabaseSession();
-    checkBackendSession();
+    const initializeSession = async () => {
+      setIsLoading(true);
+      try {
+        // Clean up URL if auth was successful from Google Redirect
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('auth') === 'success') {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
+        await Promise.all([checkSupabaseSession(), checkBackendSession()]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    initializeSession();
 
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (session?.user) {
-        setCurrentUser(session.user.user_metadata?.name || session.user.email?.split('@')[0] || '');
+        setCurrentUser(session.user.user_metadata?.name || session.user.email?.split('@')?.[0] || '');
         setCurrentUserEmail(session.user.email || '');
         setCurrentUserId(session.user.id);
         setCurrentUserAvatar(session.user.user_metadata?.avatar_url || '');
@@ -221,7 +285,7 @@ function App() {
             id: data.id,
             senderId: data.senderId,
             senderName: data.senderName,
-            content: data.content,
+            content: decryptMessage(data.content),
             timestamp: new Date(data.timestamp),
             isSelf: data.senderId === (currentUserId || currentUser),
             type: data.msgType as 'text' | 'image' | 'file',
@@ -233,7 +297,7 @@ function App() {
             id: msg.id,
             senderId: msg.senderId,
             senderName: msg.senderName,
-            content: msg.content,
+            content: decryptMessage(msg.content),
             timestamp: new Date(msg.timestamp),
             isSelf: msg.senderId === (currentUserId || currentUser),
             type: msg.msgType as 'text' | 'image' | 'file',
@@ -245,8 +309,13 @@ function App() {
           break;
         case 'user_joined':
           setUsers((prev) => {
-            const filtered = prev.filter(u => u.id !== data.userId);
-            return [...filtered, {
+            const filtered = prev.filter(u => u.id !== data.userId && u.id !== 'ai-concierge-node');
+            return [{
+               id: 'ai-concierge-node',
+               name: 'NVIDIA Nemotron',
+               avatar: 'https://cdn-icons-png.flaticon.com/512/12222/12222588.png',
+               status: 'online'
+            }, ...filtered, {
               id: data.userId,
               name: data.userName,
               status: 'online',
@@ -267,6 +336,18 @@ function App() {
               type: data.roomType,
             },
           ]);
+          break;
+        case 'reaction':
+          setMessages((prev) => prev.map(m => {
+            if (m.id === data.messageId) {
+               const existing = m.reactions || [];
+               return { 
+                 ...m, 
+                 reactions: [...existing.filter(r => r.userId !== data.userId || r.emoji !== data.emoji), { emoji: data.emoji, userId: data.userId }] 
+               };
+            }
+            return m;
+          }));
           break;
       }
     };
@@ -337,6 +418,7 @@ function App() {
     }
 
     const content = currentMessage.trim() || (pendingFile ? pendingFile.name : '');
+    const isAINode = activeChatUserId === 'ai-concierge-node';
 
     const message: Message = {
       id: Date.now().toString(),
@@ -350,20 +432,66 @@ function App() {
     };
 
     setMessages((prev) => [...prev, message]);
-    ws.send(JSON.stringify({
-      type: 'message',
-      content,
-      senderId: currentUserId || currentUser,
-      senderName: currentUser,
-      roomId: activeRoomId,
-      msgType: msgType,
-      mediaUrl: mediaUrl,
-    }));
 
+    if (!isAINode) {
+      ws.send(JSON.stringify({
+        type: 'message',
+        content: encryptMessage(content),
+        senderId: currentUserId || currentUser,
+        senderName: currentUser,
+        roomId: activeRoomId,
+        msgType: msgType,
+        mediaUrl: mediaUrl,
+      }));
+    }
+
+    analyzeSentiment(content);
     setCurrentMessage('');
     setFilePreview(null);
     setPendingFile(null);
-  }, [currentMessage, ws, currentUser, currentUserId, activeRoomId, filePreview, pendingFile]);
+
+    // AI Concierge Auto-Reply
+    if (isAINode && content) {
+      setTimeout(async () => {
+        const reply = await generateAIResponse(content, "You are Concierge Core, the central AI intelligence of this system. You are helpful, professional, and efficient.");
+        setMessages((prev) => [...prev, {
+          id: Date.now().toString() + '-ai',
+          senderId: 'ai-concierge-node',
+          senderName: 'Concierge Core',
+          avatar: 'https://cdn-icons-png.flaticon.com/512/8649/8649307.png',
+          content: reply,
+          timestamp: new Date(),
+          isSelf: false,
+          type: 'text'
+        }]);
+      }, 500);
+    }
+  }, [currentMessage, ws, currentUser, currentUserId, activeRoomId, activeChatUserId, filePreview, pendingFile]);
+
+  const handlePolish = async () => {
+    if (!currentMessage.trim() || isPolishing) return;
+    setIsPolishing(true);
+    const polished = await polishText(currentMessage);
+    setCurrentMessage(polished);
+    setIsPolishing(false);
+  };
+
+  const handleSummarize = async () => {
+    if (messages.length === 0 || isSummarizing) return;
+    setIsSummarizing(true);
+    const summary = await summarizeChat(messages.map(m => ({ sender: m.senderName, text: m.content })));
+    setMessages(prev => [...prev, {
+      id: Date.now().toString() + '-summary',
+      senderId: 'ai-concierge-node',
+      senderName: 'NVIDIA Nemotron (System Summary)',
+      content: summary,
+      timestamp: new Date(),
+      isSelf: false,
+      type: 'text',
+      isPinned: true
+    }]);
+    setIsSummarizing(false);
+  };
 
   const handleFileUpload = (file: File) => {
     setPendingFile(file);
@@ -443,6 +571,17 @@ function App() {
     setIsAddContactOpen(false);
   };
 
+  if (isLoading) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-8 w-8 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-[10px] uppercase tracking-widest font-mono text-muted-foreground animate-pulse">Initializing Interface...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!currentUser || !isConnected) {
     return (
       <ChatWelcome 
@@ -457,16 +596,17 @@ function App() {
   }
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 overflow-hidden font-inter select-none">
+    <div className="flex h-screen w-full bg-mesh overflow-hidden font-inter select-none">
       {/* Sidebar - Consistent across all views */}
       <div className={cn(
-        "fixed inset-y-0 left-0 z-50 w-72 transition-transform duration-500 transform lg:relative lg:translate-x-0 shadow-2xl lg:shadow-none",
+        "fixed inset-y-0 left-0 z-50 w-64 transition-transform duration-300 transform lg:relative lg:translate-x-0 border-r border-border bg-background/80 backdrop-blur-md",
         isSidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <ChatList
           rooms={rooms}
           users={users}
           currentRoomId={activeRoomId}
+          activeChatUserId={activeChatUserId ?? undefined}
           currentUserId={currentUserId || currentUser}
           onSelectRoom={(id) => {
             setActiveRoomId(id);
@@ -481,9 +621,7 @@ function App() {
             setActiveNav('messages');
           }}
           onSelectNav={setActiveNav}
-          onAddContact={() => setIsAddContactOpen(true)}
           onOpenProfile={() => setActiveNav('settings')}
-          onSearch={setSearchQuery}
         />
       </div>
 
@@ -508,10 +646,15 @@ function App() {
             onSettings={() => setActiveNav('settings')}
             onClearHistory={() => setMessages([])}
             onPinMessage={handlePinMessage}
+            sentiment={currentSentiment}
+            onPolish={handlePolish}
+            isPolishing={isPolishing}
+            onSummarize={handleSummarize}
+            isSummarizing={isSummarizing}
           />
         )}
 
-        {activeNav === 'analytics' && <AnalyticsDashboard data={analytics} messagesCount={messages.length} activeUsers={onlineUsers} />}
+        {activeNav === 'analytics' && <AnalyticsDashboard data={analytics} messagesCount={messages.length} activeUsers={onlineUsers} users={users} />}
 
         {activeNav === 'settings' && (
           <UserProfile 
@@ -521,6 +664,11 @@ function App() {
               avatar: currentUserAvatar 
             }} 
             onUpdate={async (data) => {
+              // Optimistically update frontend for immediate feedback
+              if (data.name) setCurrentUser(data.name);
+              if (data.email) setCurrentUserEmail(data.email);
+              if (data.avatar) setCurrentUserAvatar(data.avatar);
+
               try {
                 const res = await fetch(`${API_BASE_URL}/api/auth/user`, {
                   method: 'PATCH',
@@ -530,84 +678,63 @@ function App() {
                 });
                 if (res.ok) {
                   const updated = await res.json();
-                  setCurrentUser(updated.name);
-                  setCurrentUserAvatar(updated.avatar);
+                  // Re-sync with backend truth if provided
+                  if (updated.name) setCurrentUser(updated.name);
+                  if (updated.avatar) setCurrentUserAvatar(updated.avatar);
+                  if (updated.email) setCurrentUserEmail(updated.email);
                 }
               } catch (err) {
                 console.error('Update profile failed:', err);
               }
             }} 
             onLogout={handleLogout} 
+            theme={theme}
+            onThemeChange={setTheme}
           />
         )}
         
-        {activeNav === 'contacts' && (
-          <div className="flex-1 flex flex-col bg-white overflow-y-auto">
-            <div className="p-12 border-b border-slate-50">
-              <h2 className="text-4xl font-black text-slate-900 tracking-tight mb-2">Contact Directory</h2>
-              <p className="text-slate-400 font-medium">Manage your agent nodes and direct communication channels.</p>
-            </div>
-            
-            <div className="p-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {users.map(user => (
-                <div 
-                  key={user.id} 
-                  onClick={() => {
-                    setActiveChatUserId(user.id);
-                    setActiveRoomId('');
-                    setActiveNav('messages');
-                  }}
-                  className="p-6 rounded-[2rem] border border-slate-100 hover:border-blue-200 hover:shadow-2xl hover:shadow-blue-500/5 transition-all cursor-pointer group"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="relative">
-                      <Avatar className="h-14 w-14 ring-4 ring-slate-50 group-hover:ring-blue-50 transition-all">
-                        <AvatarImage src={user.avatar || `https://i.pravatar.cc/100?u=${user.id}`} />
-                        <AvatarFallback>{user.name[0]}</AvatarFallback>
-                      </Avatar>
-                      <span className={cn(
-                        "absolute bottom-0 right-0 h-4 w-4 rounded-full border-[3px] border-white",
-                        user.status === 'online' ? "bg-green-500" : "bg-slate-300"
-                      )} />
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-slate-900 leading-tight">{user.name}</h3>
-                      <p className="text-[10px] font-black uppercase text-blue-600 tracking-wider mt-1">{user.status}</p>
-                    </div>
-                  </div>
-                  <Button variant="ghost" className="w-full mt-6 bg-slate-50 group-hover:bg-blue-600 group-hover:text-white rounded-xl font-bold h-10 transition-all">
-                    Initialize Chat
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Modals */}
       <Dialog open={isCreateRoomOpen} onOpenChange={setIsCreateRoomOpen}>
-        <DialogContent className="rounded-3xl p-8">
-          <DialogHeader><DialogTitle className="text-2xl font-bold">New Concierge Room</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-4">
-            <Input value={newRoomName} onChange={(e) => setNewRoomName(e.target.value)} placeholder="Room name (e.g. Support, Sales)" className="h-12 rounded-xl" />
-            <Input value={newRoomDesc} onChange={(e) => setNewRoomDesc(e.target.value)} placeholder="What's this room for?" className="h-12 rounded-xl" />
-            <Button onClick={handleCreateRoom} className="w-full">Initialize Room</Button>
+        <DialogContent className="border-border p-8 bg-background font-mono">
+          <DialogHeader><DialogTitle className="text-xl font-bold uppercase tracking-[0.2em]">INITIALIZE::NEW_ROOM_NODE</DialogTitle></DialogHeader>
+          <div className="space-y-6 py-6">
+            <div className="space-y-2">
+               <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground ml-1">Node Name</label>
+               <input value={newRoomName} onChange={(e) => setNewRoomName(e.target.value)} placeholder="e.g. CORE_SUPPORT, NETWORK_OPS" className="w-full h-12 bg-muted/20 border border-border px-4 text-[11px] uppercase tracking-widest outline-none focus:border-primary/50" />
+            </div>
+            <div className="space-y-2">
+               <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground ml-1">Node Protocol Description</label>
+               <input value={newRoomDesc} onChange={(e) => setNewRoomDesc(e.target.value)} placeholder="PURPOSE_DEFINED_LOGIC..." className="w-full h-12 bg-muted/20 border border-border px-4 text-[11px] uppercase tracking-widest outline-none focus:border-primary/50" />
+            </div>
+            <button onClick={handleCreateRoom} className="tech-btn w-full h-12 text-[11px] uppercase tracking-[0.3em] font-bold">Mount Sub-Node</button>
           </div>
         </DialogContent>
       </Dialog>
 
       <Dialog open={isAddContactOpen} onOpenChange={setIsAddContactOpen}>
-        <DialogContent className="rounded-3xl p-8">
-          <DialogHeader><DialogTitle className="text-2xl font-bold">Invite Agent</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-4">
-            <Input value={newContactName} onChange={(e) => setNewContactName(e.target.value)} placeholder="Agent Display Name" className="h-12 rounded-xl" />
-            <Button onClick={handleAddContact} className="w-full">Add to Directory</Button>
+        <DialogContent className="border-border p-8 bg-background font-mono">
+          <DialogHeader><DialogTitle className="text-xl font-bold uppercase tracking-[0.2em]">INVITE::OPERATOR_NODE</DialogTitle></DialogHeader>
+          <div className="space-y-6 py-6">
+            <div className="space-y-2">
+               <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground ml-1">Operator Alias</label>
+               <input value={newContactName} onChange={(e) => setNewContactName(e.target.value)} placeholder="NODENAME_001..." className="w-full h-12 bg-muted/20 border border-border px-4 text-[11px] uppercase tracking-widest outline-none focus:border-primary/50" />
+            </div>
+            <button onClick={handleAddContact} className="tech-btn w-full h-12 text-[11px] uppercase tracking-[0.3em] font-bold">Authorize Entry</button>
           </div>
         </DialogContent>
       </Dialog>
       
       <InstallPrompt />
+      <CommandPalette 
+        isOpen={isCommandPaletteOpen} 
+        onClose={() => setIsCommandPaletteOpen(false)} 
+        onSelect={(id) => {
+          if (id === 'settings') setActiveNav('settings');
+          if (id === 'new_chat') setIsAddContactOpen(true);
+        }}
+      />
     </div>
   );
 }

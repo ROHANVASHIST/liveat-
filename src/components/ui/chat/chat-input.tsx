@@ -1,14 +1,13 @@
 import React from 'react';
 import { Button } from '../button';
-import { Input } from '../input';
 import { cn } from '@/lib/utils';
 import { 
   SendHorizontal, 
-  Paperclip, 
-  Smile, 
   Mic, 
   Plus,
-  Image as ImageIcon
+  Wand,
+  Terminal,
+  Activity
 } from 'lucide-react';
 
 interface ChatInputProps {
@@ -19,6 +18,8 @@ interface ChatInputProps {
   placeholder?: string;
   disabled?: boolean;
   onFileSelect?: (file: File) => void;
+  onPolish?: () => void;
+  isPolishing?: boolean;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
@@ -26,9 +27,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onChange,
   onSend,
   isLoading,
-  placeholder = 'Type a message...',
   disabled,
   onFileSelect,
+  onPolish,
+  isPolishing,
 }) => {
   const [isRecording, setIsRecording] = React.useState(false);
   const recognitionRef = React.useRef<any>(null);
@@ -48,7 +50,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const startSpeechRecognition = () => {
     if (!('webkitSpeechRecognition' in window) && !('speechRecognition' in window)) {
-      alert('Speech recognition is not supported in this browser.');
       return;
     }
 
@@ -65,36 +66,24 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     recognition.interimResults = true;
     recognition.lang = 'en-US';
 
-    recognition.onstart = () => {
-      setIsRecording(true);
-    };
-
+    recognition.onstart = () => setIsRecording(true);
     recognition.onresult = (event: any) => {
       const transcript = Array.from(event.results)
         .map((result: any) => result[0])
         .map((result: any) => result.transcript)
         .join('');
-      
       onChange(transcript);
     };
-
-    recognition.onerror = (event: any) => {
-      console.error('Speech recognition error:', event.error);
-      setIsRecording(false);
-    };
-
-    recognition.onend = () => {
-      setIsRecording(false);
-    };
-
+    recognition.onerror = () => setIsRecording(false);
+    recognition.onend = () => setIsRecording(false);
     recognition.start();
     recognitionRef.current = recognition;
   };
 
   return (
-    <div className="p-4 md:p-6 bg-gradient-to-t from-background to-transparent sticky bottom-0 z-30">
-      <div className="max-w-5xl mx-auto flex items-end gap-3 p-2 bg-card/50 backdrop-blur-3xl border border-white/5 rounded-[2rem] shadow-2xl group focus-within:border-primary/30 transition-all duration-500">
-        <div className="flex items-center">
+    <div className="p-4 md:p-6 bg-background border-t border-border mt-auto font-mono">
+      <div className="max-w-5xl mx-auto flex items-end gap-3 p-1.5 border border-border bg-muted/10 group focus-within:border-primary/40 transition-all">
+        <div className="flex items-center gap-1">
             <input
               type="file"
               id="file-upload"
@@ -103,68 +92,67 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             />
             <label
               htmlFor="file-upload"
-              className="h-10 w-10 flex items-center justify-center cursor-pointer text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded-full transition-all active:scale-95"
+              className="h-10 w-10 flex items-center justify-center cursor-pointer text-muted-foreground hover:text-primary transition-colors border border-transparent hover:border-border"
             >
-              <Plus className="h-5 w-5" />
+              <Plus size={18} />
             </label>
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              onClick={() => onChange(value + ' 😊')}
-              className="text-slate-400 hover:text-blue-600 rounded-full hidden sm:flex"
-            >
-              <Smile className="h-5 w-5" />
-            </Button>
         </div>
 
-        <div className="flex-1 pb-1">
+        <div className="flex-1 min-w-0 pb-1.5">
           <textarea
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={isRecording ? "Listening..." : placeholder}
+            placeholder={isRecording ? "ANALYZING_VOICE..." : "CMD >_"}
             rows={1}
             disabled={disabled || isLoading}
             className={cn(
-              "w-full bg-transparent border-none focus:ring-0 resize-none py-2 text-sm md:text-base max-h-32 min-h-[40px] transition-all outline-none",
-              isRecording ? "text-blue-600 font-medium italic" : "text-slate-900 placeholder:text-slate-300"
+              "w-full bg-transparent border-none focus:ring-0 resize-none py-2 text-[13px] tracking-widest max-h-48 min-h-[40px] transition-all outline-none",
+              isRecording ? "text-primary animate-pulse" : "text-foreground placeholder:text-muted-foreground/30"
             )}
             style={{ height: 'auto' }}
-            onInput={(e) => {
-              const target = e.target as HTMLTextAreaElement;
-              target.style.height = 'auto';
-              target.style.height = `${target.scrollHeight}px`;
-            }}
           />
         </div>
 
-        <div className="flex items-center gap-2">
-            <Button 
-              variant="ghost" 
-              size="icon" 
+        <div className="flex items-center gap-1.5 pb-1">
+            <button 
               onClick={startSpeechRecognition}
               className={cn(
-                "h-10 w-10 rounded-full transition-all active:scale-90",
-                isRecording ? "text-red-500 bg-red-50 animate-pulse" : "text-slate-400 hover:text-blue-600 hover:bg-slate-50"
+                "h-10 w-10 flex items-center justify-center transition-all border",
+                isRecording ? "text-primary border-primary bg-primary/10" : "text-muted-foreground border-transparent hover:border-border"
               )}
             >
-              <Mic className={cn("h-5 w-5", isRecording && "fill-red-500")} />
-            </Button>
-            <Button
+              <Mic size={16} className={cn(isRecording && "animate-pulse")} />
+            </button>
+            {onPolish && (
+              <button 
+                onClick={onPolish}
+                disabled={!value.trim() || isPolishing || isLoading}
+                className={cn(
+                  "h-10 w-10 flex items-center justify-center transition-all border",
+                  isPolishing ? "text-primary border-primary bg-primary/10" : "text-muted-foreground border-transparent hover:border-border disabled:opacity-20"
+                )}
+              >
+                <Wand size={16} className={cn(isPolishing && "animate-spin")} />
+              </button>
+            )}
+            <button
               onClick={onSend}
               disabled={(!value.trim() && !isLoading) || disabled}
               className={cn(
-                "h-12 w-12 rounded-2xl bg-blue-600 text-white shadow-xl shadow-blue-500/20 transition-all duration-300",
-                value.trim() ? "scale-100 opacity-100" : "scale-90 opacity-40 shadow-none grayscale"
+                "tech-btn h-10 px-4 flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest",
+                !value.trim() && "opacity-20 grayscale pointer-events-none"
               )}
             >
-              <SendHorizontal className="h-6 w-6 ml-0.5" />
-            </Button>
+              <span className="hidden sm:inline">Execute</span>
+              <SendHorizontal size={14} />
+            </button>
         </div>
       </div>
-      <p className="text-center text-[10px] text-muted-foreground/30 mt-3 font-bold uppercase tracking-widest">
-        Enterprise Secure • End-to-End Encrypted
-      </p>
+      <div className="max-w-5xl mx-auto flex justify-between mt-2 opacity-50 px-2">
+         <span className="text-[8px] uppercase tracking-[0.2em] text-muted-foreground">Encryption: AES-256-GCM</span>
+         <span className="text-[8px] uppercase tracking-[0.2em] text-muted-foreground">Buffer State: {value.length}/4096</span>
+      </div>
     </div>
   );
 };

@@ -6,10 +6,11 @@ import {
   CheckCheck, 
   FileIcon, 
   Download, 
-  MoreHorizontal, 
   Smile,
-  ImageIcon,
-  Star
+  Star,
+  Sparkles,
+  Terminal,
+  Activity
 } from 'lucide-react';
 
 interface Message {
@@ -24,6 +25,7 @@ interface Message {
   mediaUrl?: string;
   status?: 'sent' | 'delivered' | 'read';
   isPinned?: boolean;
+  reactions?: { emoji: string; userId: string; userName?: string }[];
 }
 
 interface MessageProps {
@@ -42,117 +44,127 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
   const [showReactions, setShowReactions] = useState(false);
 
   const reactions = ['👍', '❤️', '😂', '😮', '😢', '😡'];
+  const isAI = (message.senderName || '').toLowerCase().includes('agent') || 
+               (message.senderName || '').toLowerCase().includes('ai') || 
+               message.senderName === 'General';
 
   return (
     <div className={cn(
-      "group flex w-full gap-3 mb-6 transition-all duration-500 animate-in fade-in slide-in-from-bottom-3",
+      "group flex w-full gap-4 mb-8 font-mono",
       isSelf ? "flex-row-reverse" : "flex-row"
     )}>
-      <Avatar className="h-9 w-9 shrink-0 shadow-md border-2 border-white ring-1 ring-slate-100 mt-1 cursor-pointer hover:scale-105 transition-transform">
-        <AvatarImage src={message.senderAvatar} alt={message.senderName} className="object-cover" />
-        <AvatarFallback className="font-bold bg-slate-50 text-[10px] text-slate-400">
-          {message.senderName.substring(0, 1).toUpperCase()}
-        </AvatarFallback>
-      </Avatar>
+      {/* Sender Identifier */}
+      <div className="flex flex-col items-center gap-2">
+        <Avatar className={cn(
+          "h-10 w-10 border rounded-none flex items-center justify-center overflow-hidden transition-all",
+          isSelf ? "border-primary/50" : "border-border"
+        )}>
+          <AvatarImage src={message.senderAvatar} className="grayscale brightness-125" />
+          <AvatarFallback className="text-[10px] bg-muted font-bold rounded-none flex items-center justify-center h-full w-full">
+            {message.senderName ? message.senderName.substring(0, 1) : 'U'}
+          </AvatarFallback>
+        </Avatar>
+        <div className={cn("h-full w-[1px] bg-border/30 grow")} />
+      </div>
       
       <div className={cn(
-        "flex max-w-[75%] flex-col gap-1.5",
+        "flex max-w-[85%] flex-col gap-2",
         isSelf ? "items-end" : "items-start"
       )}>
-        <div className="flex items-center gap-2 px-1">
-           {!isSelf && <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{message.senderName}</span>}
-           <span className="text-[9px] font-bold text-slate-300 uppercase tracking-widest">
-             {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        {/* Metadata Line */}
+        <div className="flex items-center gap-3 px-1">
+           {isSelf ? (
+             <span className="text-[9px] font-bold text-primary uppercase tracking-widest">Operator::Self</span>
+           ) : (
+             <>
+               <span className="text-[9px] font-bold text-foreground uppercase tracking-widest">{message.senderName}</span>
+               {isAI && (
+                 <span className="text-[8px] font-bold bg-primary/10 border border-primary/20 text-primary px-1.5 py-0.5 uppercase tracking-tighter flex items-center gap-1">
+                   <Sparkles size={8} /> Internal_Node
+                 </span>
+               )}
+             </>
+           )}
+           <span className="text-[8px] text-muted-foreground uppercase tracking-widest ml-auto opacity-50">
+             {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
            </span>
         </div>
 
-        <div className="relative group/bubble flex items-center gap-2">
-          {isSelf && (
-            <div className="flex flex-col gap-1 items-center">
-              <button
-                 onClick={() => setShowReactions(!showReactions)}
-                 className="opacity-0 group-hover/bubble:opacity-100 p-2 hover:bg-slate-50 rounded-full transition-all text-slate-300 hover:text-blue-600"
+        {/* Message Node */}
+        <div className="relative group/bubble flex items-start gap-3">
+          <div className={cn(
+            "border p-4 transition-all duration-200 relative min-w-[120px]",
+            isSelf
+              ? "bg-primary border-primary text-primary-foreground"
+              : cn(
+                  "bg-muted/30 border-border text-foreground hover:border-primary/40 focus-within:border-primary/40",
+                  isAI && "border-primary/20 bg-primary/5"
+                )
+          )}>
+            {/* Action Buttons for Node */}
+            <div className={cn(
+              "absolute -top-3 flex gap-1 opacity-0 group-hover/bubble:opacity-100 transition-opacity z-10",
+              isSelf ? "right-2" : "left-2"
+            )}>
+              <button 
+                onClick={() => setShowReactions(!showReactions)}
+                className="h-6 px-1.5 bg-background border border-border text-foreground hover:border-primary transition-colors flex items-center gap-1"
               >
-                <Smile className="h-4 w-4" />
+                <Smile size={10} />
               </button>
-              <button
-                 onClick={onPin}
-                 className={cn(
-                   "opacity-0 group-hover/bubble:opacity-100 p-2 hover:bg-slate-50 rounded-full transition-all",
-                   message.isPinned ? "text-orange-400 opacity-100" : "text-slate-300 hover:text-orange-500"
-                 )}
+              <button 
+                onClick={onPin}
+                className={cn(
+                  "h-6 px-1.5 bg-background border transition-colors flex items-center gap-1",
+                  message.isPinned ? "border-primary text-primary" : "border-border text-foreground hover:border-primary"
+                )}
               >
-                <Star className={cn("h-4 w-4", message.isPinned && "fill-orange-400")} />
+                <Star size={10} className={cn(message.isPinned && "fill-primary")} />
               </button>
             </div>
-          )}
 
-          <div className={cn(
-            "rounded-2xl px-5 py-3.5 shadow-sm transition-all duration-300",
-            isSelf
-              ? "bg-gradient-to-br from-blue-600 to-indigo-600 text-white rounded-tr-none shadow-blue-500/20"
-              : "bg-white border border-slate-100 text-slate-800 rounded-tl-none hover:bg-slate-50/50"
-          )}>
             {message.type === 'image' && message.mediaUrl ? (
-              <div className="relative rounded-xl overflow-hidden mb-1 group/img shadow-sm border border-black/5">
-                <img src={message.mediaUrl} alt="Shared Image" className="max-w-full h-auto max-h-[350px] object-cover transition-transform group-hover/img:scale-105 duration-700" />
-                <div className="absolute inset-0 bg-slate-900/0 group-hover/img:bg-slate-900/20 transition-all flex items-center justify-center opacity-0 group-hover/img:opacity-100">
-                   <div className="h-10 w-10 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white scale-90 group-hover/img:scale-100 transition-transform">
-                      <Download className="h-5 w-5" />
-                   </div>
-                </div>
+              <div className="border border-border/20 mb-2 overflow-hidden group/img relative bg-black/20">
+                <img src={message.mediaUrl} alt="Shared Node Data" className="max-w-full h-auto max-h-[350px] object-cover grayscale brightness-110 contrast-125" />
+                <div className="absolute inset-0 bg-primary/10 opacity-0 group-hover/img:opacity-100 transition-opacity" />
               </div>
             ) : message.type === 'file' && message.mediaUrl ? (
               <div className={cn(
-                "flex items-center gap-4 p-4 rounded-xl mb-1 border transition-all cursor-pointer group/file",
-                isSelf ? "bg-white/10 border-white/20 hover:bg-white/20" : "bg-slate-50 border-slate-200 hover:border-blue-200"
+                "flex items-center gap-4 p-3 mb-2 border transition-colors cursor-pointer group/file",
+                isSelf ? "bg-white/10 border-white/20" : "bg-background border-border hover:border-primary/40"
               )}>
-                <div className={cn(
-                  "h-11 w-11 rounded-lg flex items-center justify-center transition-colors",
-                  isSelf ? "bg-white/20 group-hover/file:bg-white/30" : "bg-white shadow-sm group-hover/file:bg-blue-50"
-                )}>
-                   <FileIcon className={cn("h-5 w-5", isSelf ? "text-white" : "text-blue-600")} />
+                <div className="h-9 w-9 border border-border/50 flex items-center justify-center">
+                   <FileIcon size={16} />
                 </div>
                 <div className="flex-1 min-w-0">
-                   <p className={cn("text-sm font-bold truncate", isSelf ? "text-white" : "text-slate-900")}>Document.pdf</p>
-                   <p className={cn("text-[10px] uppercase font-black tracking-widest opacity-60 mt-0.5", isSelf ? "text-blue-100" : "text-slate-400")}>2.4 MB • PDF NODE</p>
+                   <p className="text-[11px] font-bold truncate uppercase tracking-widest">persistence_file.bin</p>
+                   <p className="text-[8px] uppercase tracking-widest opacity-60 mt-1">2.4 MB • DATA_NODE</p>
                 </div>
-                <Download className={cn("h-4 w-4 transition-transform group-hover/file:translate-y-0.5", isSelf ? "text-white/40" : "text-slate-300")} />
+                <Download size={12} className="opacity-40" />
               </div>
             ) : (
-              <p className="text-[15px] leading-relaxed tracking-tight font-medium">
-                {message.content.split(/(\s+)/).map((part, i) => {
-                  if (part.match(/^https?:\/\/\S+/)) {
-                    return (
-                      <a 
-                        key={i} 
-                        href={part} 
-                        target="_blank" 
-                        rel="noopener noreferrer" 
-                        className={cn(
-                          "underline font-bold transition-all underline-offset-4 decoration-current/30 hover:decoration-current",
-                          isSelf ? "text-white" : "text-blue-600"
-                        )}
-                      >
-                        {part}
-                      </a>
-                    );
-                  }
-                  return part;
-                })}
+              <p className={cn(
+                "text-[13px] leading-relaxed tracking-wider",
+                isSelf ? "font-medium" : "text-foreground"
+              )}>
+                {message.content}
               </p>
             )}
             
+            {/* Status Line */}
             <div className={cn(
-              "flex items-center gap-1.5 mt-2 transition-opacity",
-              isSelf ? "justify-end" : "justify-start"
+              "flex items-center gap-2 mt-3 opacity-40",
+              isSelf ? "justify-end text-primary-foreground" : "justify-start text-muted-foreground"
             )}>
+              <span className="text-[8px] uppercase tracking-widest">
+                Checksum: {message.id?.toString().substring(0, 8) || 'UNKNOWN'}
+              </span>
               {isSelf && (
                 <div className="flex items-center">
                   {message.status === 'read' ? (
-                    <CheckCheck className="h-3.5 w-3.5 text-blue-100" />
+                    <CheckCheck size={10} />
                   ) : (
-                    <Check className="h-3.5 w-3.5 text-blue-200/60" />
+                    <Check size={10} />
                   )}
                 </div>
               )}
@@ -160,7 +172,7 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
 
             {showReactions && (
               <div className={cn(
-                "absolute -top-14 bg-white border border-slate-100 rounded-2xl p-1.5 flex gap-1 z-50 shadow-2xl shadow-slate-200/50 animate-in zoom-in-95 duration-200",
+                "absolute -top-10 bg-background border border-primary/40 p-1 flex gap-1 z-50 shadow-[0_0_20px_rgba(0,229,255,0.1)]",
                 isSelf ? "right-0" : "left-0"
               )}>
                 {reactions.map((emoji) => (
@@ -170,34 +182,29 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
                       onReaction?.(emoji);
                       setShowReactions(false);
                     }}
-                    className="h-9 w-9 text-xl hover:bg-slate-50 rounded-xl transition-all flex items-center justify-center hover:scale-125 active:scale-95"
+                    className="h-8 w-8 text-sm hover:bg-primary/10 transition-colors flex items-center justify-center border border-transparent hover:border-primary/20"
                   >
                     {emoji}
                   </button>
                 ))}
               </div>
             )}
+            
+            {/* Display Subscript Reactions */}
+            {message.reactions && message.reactions.length > 0 && (
+              <div className="absolute -bottom-3 right-2 flex gap-1 z-10">
+                {Array.from(new Set(message.reactions.map(r => r.emoji))).map(emoji => {
+                   const count = message.reactions!.filter(r => r.emoji === emoji).length;
+                   return (
+                     <div key={emoji} className="flex items-center gap-1 bg-background border border-border px-1.5 py-0.5 rounded-full text-[10px] shadow-sm">
+                       <span>{emoji}</span>
+                       {count > 1 && <span className="font-bold opacity-70">{count}</span>}
+                     </div>
+                   );
+                })}
+              </div>
+            )}
           </div>
-
-          {!isSelf && (
-            <div className="flex flex-col gap-1 items-center">
-              <button
-                 onClick={() => setShowReactions(!showReactions)}
-                 className="opacity-0 group-hover/bubble:opacity-100 p-2 hover:bg-slate-50 rounded-full transition-all text-slate-300 hover:text-blue-600"
-              >
-                <Smile className="h-4 w-4" />
-              </button>
-              <button
-                 onClick={onPin}
-                 className={cn(
-                   "opacity-0 group-hover/bubble:opacity-100 p-2 hover:bg-slate-50 rounded-full transition-all",
-                   message.isPinned ? "text-orange-400 opacity-100" : "text-slate-300 hover:text-orange-500"
-                 )}
-              >
-                <Star className={cn("h-4 w-4", message.isPinned && "fill-orange-400")} />
-              </button>
-            </div>
-          )}
         </div>
       </div>
     </div>

@@ -5,34 +5,17 @@ import {
   Bell, 
   Palette, 
   LogOut, 
-  Check, 
   Camera, 
-  Smartphone, 
   Globe, 
   Mail, 
-  Lock,
-  Layout,
-  MessageSquare,
   ChevronRight,
   Monitor,
   Volume2,
-  ArrowRight
+  Terminal,
+  Activity,
+  Cpu
 } from 'lucide-react';
-import { 
-  Avatar, 
-  AvatarFallback, 
-  AvatarImage 
-} from './avatar';
-import { Button } from './button';
-import { Input } from './input';
-import { 
-  Card, 
-  CardContent, 
-  CardDescription, 
-  CardHeader, 
-  CardTitle 
-} from './card';
-import { Badge } from './badge';
+import { AvatarImage } from './avatar';
 import { cn } from '@/lib/utils';
 
 interface UserProfileProps {
@@ -44,263 +27,226 @@ interface UserProfileProps {
   };
   onUpdate: (data: any) => void;
   onLogout: () => void;
+  theme: string;
+  onThemeChange: (theme: 'black' | 'light') => void;
 }
 
-export const UserProfile: React.FC<UserProfileProps> = ({ user, onUpdate, onLogout }) => {
+export const UserProfile: React.FC<UserProfileProps> = ({ user, onUpdate, onLogout, theme, onThemeChange }) => {
   const [activeTab, setActiveTab] = useState('profile');
   const [name, setName] = useState(user.name);
   const [email, setEmail] = useState(user.email || '');
+  const [avatar, setAvatar] = useState(user.avatar || '');
   
-  const [themeColor, setThemeColor] = useState('#0066cc');
-  const [roundness, setRoundness] = useState('modern');
-  const [position, setPosition] = useState('right');
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setAvatar(reader.result as string);
+      };
+      reader.readAsDataURL(e.target.files[0]);
+    }
+  };
 
   const navItems = [
-    { id: 'profile', label: 'Profile', icon: User },
-    { id: 'widget', label: 'Widget Customization', icon: Layout },
-    { id: 'notifications', label: 'Notifications', icon: Bell },
-    { id: 'integrations', label: 'Integrations', icon: Globe },
+    { id: 'profile', label: 'Operator_Identity', icon: User },
+    { id: 'widget', label: 'Theme_Config', icon: Palette },
+    { id: 'notifications', label: 'Signal_Rules', icon: Bell },
+    { id: 'integrations', label: 'External_Mesh', icon: Globe },
   ];
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 text-slate-900 animate-in fade-in duration-500 overflow-hidden">
-      {/* Header */}
-      <header className="p-8 pb-0">
-        <div className="flex items-center justify-between mb-2">
-           <h1 className="text-4xl font-bold tracking-tight">Settings</h1>
-           <div className="flex items-center gap-4">
-              <Button variant="outline" size="icon" className="h-10 w-10 border-slate-200">
-                 <Bell className="h-5 w-5 text-slate-400" />
-              </Button>
-              <Avatar className="h-10 w-10 border border-slate-200">
-                <AvatarImage src={user.avatar} />
-                <AvatarFallback>{user.name[0]}</AvatarFallback>
-              </Avatar>
+    <div className="flex flex-col h-full bg-background font-mono text-foreground animate-in fade-in duration-500 overflow-hidden">
+      {/* Header - System Protocol */}
+      <header className="p-8 pb-4 border-b border-border bg-muted/10">
+        <div className="flex items-center justify-between mb-4">
+           <div className="flex items-center gap-3">
+              <Terminal size={24} className="text-primary" />
+              <h1 className="text-sm font-bold uppercase tracking-[0.4em]">Protocol::Configuration_Node</h1>
+           </div>
+           <div className="flex items-center gap-4 border border-border px-3 py-1.5 bg-background">
+              <Activity size={12} className="text-primary animate-tech-pulse" />
+              <span className="text-[10px] font-bold uppercase tracking-widest opacity-60">Status: Read/Write</span>
            </div>
         </div>
-        <p className="text-slate-500 font-medium">Personalize your concierge experience and interface behavior.</p>
+        <p className="text-[10px] text-muted-foreground uppercase tracking-widest opacity-50">Authorized change-set for operator environmental variables.</p>
       </header>
 
       <div className="flex-1 flex gap-8 p-8 overflow-hidden">
-        {/* Sub Navigation */}
-        <aside className="w-64 space-y-2">
+        {/* Navigation Matrix */}
+        <aside className="w-64 space-y-1">
+          <div className="text-[9px] uppercase tracking-[0.3em] text-muted-foreground mb-4 opacity-50 px-2 font-bold">Subsystem Index</div>
           {navItems.map((item) => (
-            <Button
+            <button
               key={item.id}
-              variant="ghost"
               onClick={() => setActiveTab(item.id)}
               className={cn(
-                "w-full flex items-center justify-between px-4 py-3 h-auto group",
+                "w-full flex items-center justify-between px-3 py-2.5 transition-all border",
                 activeTab === item.id 
-                  ? "bg-white text-blue-600 shadow-sm border border-slate-200" 
-                  : "text-slate-400 hover:bg-slate-200/50 hover:text-slate-600"
+                  ? "bg-primary text-primary-foreground border-primary" 
+                  : "text-muted-foreground border-transparent hover:border-border hover:bg-muted/30"
               )}
             >
-              <div className="flex items-center gap-3">
-                <item.icon className="h-4 w-4" />
+              <div className="flex items-center gap-3 text-[10px] uppercase tracking-widest font-bold">
+                <item.icon size={14} />
                 {item.label}
               </div>
-              {activeTab === item.id && <ChevronRight className="h-3 w-3" />}
-            </Button>
+              {activeTab === item.id && <ChevronRight size={12} />}
+            </button>
           ))}
-          <div className="pt-8 mt-8 border-t border-slate-200">
-             <Button onClick={onLogout} variant="ghost" className="w-full flex items-center gap-3 px-4 py-3 h-auto text-red-500 hover:bg-red-50 hover:text-red-600 bg-transparent">
-                <LogOut className="h-4 w-4" />
-                Sign Out
-             </Button>
+          <div className="pt-8 mt-8 border-t border-border">
+             <button onClick={onLogout} className="w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest font-bold text-red-500 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-all">
+                <LogOut size={14} />
+                Terminate_Session
+             </button>
           </div>
         </aside>
 
-        {/* Content Area */}
+        {/* Configuration Matrix Area */}
         <main className="flex-1 overflow-y-auto pr-4 scrollbar-hide">
           {activeTab === 'profile' && (
-            <div className="space-y-8 animate-in slide-in-from-right-4 duration-500">
-              <Card className="rounded-[2.5rem] border-slate-200 shadow-sm p-8">
-                <div className="flex items-start justify-between mb-8">
-                   <div className="flex items-center gap-6">
+            <div className="space-y-8">
+              <div className="tech-card p-8 bg-muted/10 border-primary/10 transition-all">
+                <div className="flex items-start justify-between mb-8 pb-8 border-b border-border">
+                   <div className="flex items-center gap-8">
                       <div className="relative group">
-                         <div className="h-24 w-24 rounded-3xl overflow-hidden border border-slate-100 shadow-xl">
-                            <img src={user.avatar || `https://i.pravatar.cc/200?u=${user.name}`} alt="profile" className="w-full h-full object-cover" />
+                         <div className="h-24 w-24 border border-primary/20 overflow-hidden bg-background flex items-center justify-center text-3xl font-bold group-hover:border-primary transition-all">
+                            {avatar ? (
+                               <img src={avatar} alt="identity" className="w-full h-full object-cover grayscale brightness-125" />
+                            ) : (
+                               <span className="text-primary">{user.name?.[0] || 'O'}</span>
+                            )}
                          </div>
-                         <Button variant="default" size="icon" className="absolute -bottom-2 -right-2 h-8 w-8 rounded-full border-2 border-white group-hover:scale-110">
-                            <Camera className="h-4 w-4" />
-                         </Button>
+                         <input 
+                           type="file" 
+                           id="avatarUpload" 
+                           className="hidden" 
+                           onChange={handleAvatarChange} 
+                         />
+                         <label htmlFor="avatarUpload" className="absolute -bottom-2 -right-2 h-7 w-7 border border-primary bg-primary text-primary-foreground flex items-center justify-center cursor-pointer hover:bg-primary/90 transition-all shadow-lg">
+                            <Camera size={14} />
+                         </label>
                       </div>
                       <div>
-                         <h3 className="text-2xl font-bold">{user.name}</h3>
-                         <div className="flex items-center gap-2 mt-1">
-                            <span className="text-sm font-medium text-slate-400">Concierge Admin • Joined Oct 2023</span>
+                         <h3 className="text-lg font-bold uppercase tracking-widest">{user.name}</h3>
+                         <div className="flex flex-col gap-1.5 mt-2">
+                            <span className="text-[10px] text-muted-foreground uppercase tracking-widest opacity-60">ID: {user.email || 'operator_001'}</span>
+                            <span className="text-[10px] text-primary uppercase tracking-widest font-bold">Role: Node_Administrator</span>
                          </div>
-                         <Badge variant="outline" className="mt-3 bg-slate-100 text-[10px] font-black border-slate-200 text-slate-500 uppercase tracking-widest px-2 py-0.5">Premium Tier</Badge>
+                         <div className="mt-4 flex gap-2">
+                           <span className="text-[8px] border border-primary/20 bg-primary/5 px-2 py-0.5 text-primary uppercase tracking-widest font-bold">Tier_Access v3.0</span>
+                           <span className="text-[8px] border border-border bg-muted/20 px-2 py-0.5 text-muted-foreground uppercase tracking-widest font-bold">Kernel_Core</span>
+                         </div>
                       </div>
                    </div>
-                   <Button onClick={() => onUpdate({ name, email })} className="bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl h-10 px-6">Save Changes</Button>
+                   <button onClick={() => onUpdate({ name, email, avatar })} className="tech-btn h-10 px-8 text-[10px] uppercase tracking-widest font-bold">Compile Changes</button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-6">
-                   <div className="space-y-1.5">
-                      <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Display Name</label>
-                      <Input value={name} onChange={e => setName(e.target.value)} className="h-12 bg-white border-slate-200 rounded-xl font-medium" />
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                   <div className="space-y-2">
+                      <label className="text-[9px] font-bold uppercase text-muted-foreground tracking-widest opacity-60">Identity Name</label>
+                      <input value={name} onChange={e => setName(e.target.value)} className="w-full h-11 bg-background border border-border focus:border-primary/50 px-4 text-[11px] uppercase tracking-widest outline-none transition-all" />
                    </div>
-                   <div className="space-y-1.5">
-                      <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Email Address</label>
-                      <Input value={email} onChange={e => setEmail(e.target.value)} className="h-12 bg-white border-slate-200 rounded-xl font-medium" />
+                   <div className="space-y-2">
+                      <label className="text-[9px] font-bold uppercase text-muted-foreground tracking-widest opacity-60">Primary Routing E-Mail</label>
+                      <input value={email} onChange={e => setEmail(e.target.value)} className="w-full h-11 bg-background border border-border focus:border-primary/50 px-4 text-[11px] uppercase tracking-widest outline-none transition-all" />
                    </div>
-                   <div className="space-y-1.5">
-                      <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Current Password</label>
-                      <Input type="password" value="********" readOnly className="h-12 bg-white border-slate-200 rounded-xl font-medium" />
+                   <div className="space-y-2">
+                      <label className="text-[9px] font-bold uppercase text-muted-foreground tracking-widest opacity-60">Access_Key (Current)</label>
+                      <input type="password" value="********" readOnly className="w-full h-11 bg-muted/20 border border-border px-4 text-[11px] uppercase tracking-widest outline-none opacity-50" />
                    </div>
-                   <div className="space-y-1.5">
-                      <label className="text-[10px] font-black uppercase text-slate-400 ml-1">New Password</label>
-                      <Input type="password" placeholder="Leave blank to keep current" className="h-12 bg-white border-slate-200 rounded-xl font-medium" />
+                   <div className="space-y-2">
+                      <label className="text-[9px] font-bold uppercase text-muted-foreground tracking-widest opacity-60">Access_Key (New)</label>
+                      <input type="password" placeholder="LEAVE BLANK TO RETAIN" className="w-full h-11 bg-background border border-border focus:border-primary/50 px-4 text-[11px] uppercase tracking-widest outline-none transition-all" />
                    </div>
                 </div>
-              </Card>
+              </div>
             </div>
           )}
 
           {activeTab === 'widget' && (
-            <div className="space-y-8 animate-in slide-in-from-right-4 duration-500">
-               <Card className="rounded-[2.5rem] border-slate-200 shadow-sm p-8">
-                  <div className="flex flex-col lg:flex-row gap-12">
-                     <div className="flex-1 space-y-8">
-                        <div>
-                           <h4 className="text-sm font-black uppercase text-slate-400 tracking-widest mb-4">Theme Color</h4>
-                           <div className="flex gap-4">
-                              {['#0066cc', '#10b981', '#8b5cf6', '#f59e0b', '#1e293b'].map(c => (
-                                 <Button
-                                   key={c}
-                                   variant="ghost"
-                                   onClick={() => setThemeColor(c)}
-                                   className={cn(
-                                     "h-8 w-8 rounded-full border-2 border-white ring-1 ring-slate-200 shadow-sm group relative p-0",
-                                     themeColor === c && "ring-blue-600"
-                                   )}
-                                   style={{ backgroundColor: c }}
-                                 >
-                                    {themeColor === c && <Check className="absolute inset-0 m-auto h-3 w-3 text-white" />}
-                                 </Button>
-                              ))}
-                              <Button variant="outline" size="icon" className="h-8 w-8 rounded-full border-dashed border-slate-300 text-slate-400">+</Button>
-                           </div>
+             <div className="space-y-8">
+               <div className="tech-card p-8 bg-muted/10 border-primary/10 transition-all">
+                  <h4 className="text-[10px] font-bold uppercase text-muted-foreground tracking-[0.2em] mb-6">Monochrome Overlay Configuration</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg">
+                     <button
+                       onClick={() => onThemeChange('black')}
+                       className={cn(
+                         "h-auto p-4 border transition-all flex flex-col items-start gap-4 relative group",
+                         theme === 'black' ? "border-primary bg-primary/5 shadow-[0_0_15px_rgba(0,229,255,0.05)]" : "border-border hover:border-primary/20 bg-background"
+                       )}
+                     >
+                        <div className="flex items-center justify-between w-full">
+                           <div className="h-6 w-6 border-2 border-white/10 bg-[#0a0a0a]" />
+                           {theme === 'black' && <Activity size={12} className="text-primary animate-tech-pulse" />}
                         </div>
-
-                        <div>
-                           <h4 className="text-sm font-black uppercase text-slate-400 tracking-widest mb-4">Border Roundness</h4>
-                           <div className="flex bg-slate-100 p-1 rounded-xl w-fit">
-                              {['sharp', 'modern', 'playful'].map(r => (
-                            <Button
-                               key={r}
-                               variant={roundness === r ? "default" : "ghost"}
-                               onClick={() => setRoundness(r)}
-                               className={cn(
-                                  "px-6 py-2 h-auto text-xs font-bold capitalize transition-all",
-                                  roundness === r ? "shadow-lg" : "text-slate-500 hover:text-slate-700"
-                               )}
-                            >
-                               {r}
-                            </Button>
-                              ))}
-                           </div>
+                        <div className="text-left mt-2">
+                           <p className="text-[11px] font-bold uppercase tracking-widest">Dark Protocol</p>
                         </div>
-
-                        <div>
-                           <h4 className="text-sm font-black uppercase text-slate-400 tracking-widest mb-4">Positioning</h4>
-                           <div className="flex items-center gap-8">
-                              <label className="flex items-center gap-3 cursor-pointer group">
-                                 <div className={cn("h-4 w-4 rounded-full border-2 border-slate-300 flex items-center justify-center group-hover:border-blue-600", position === 'right' && "border-blue-600")}>
-                                    {position === 'right' && <div className="h-2 w-2 rounded-full bg-blue-600" />}
-                                 </div>
-                                 <input type="radio" value="right" checked={position === 'right'} onChange={() => setPosition('right')} className="hidden" />
-                                 <span className="text-sm font-bold text-slate-600">Bottom Right</span>
-                              </label>
-                              <label className="flex items-center gap-3 cursor-pointer group">
-                                 <div className={cn("h-4 w-4 rounded-full border-2 border-slate-300 flex items-center justify-center group-hover:border-blue-600", position === 'left' && "border-blue-600")}>
-                                    {position === 'left' && <div className="h-2 w-2 rounded-full bg-blue-600" />}
-                                 </div>
-                                 <input type="radio" value="left" checked={position === 'left'} onChange={() => setPosition('left')} className="hidden" />
-                                 <span className="text-sm font-bold text-slate-600">Bottom Left</span>
-                              </label>
-                           </div>
+                     </button>
+                     <button
+                       onClick={() => onThemeChange('light')}
+                       className={cn(
+                         "h-auto p-4 border transition-all flex flex-col items-start gap-4 relative group",
+                         theme === 'light' ? "border-primary bg-primary/5 shadow-[0_0_15px_rgba(0,229,255,0.05)]" : "border-border hover:border-primary/20 bg-background"
+                       )}
+                     >
+                        <div className="flex items-center justify-between w-full">
+                           <div className="h-6 w-6 border-2 border-black/10 bg-white" />
+                           {theme === 'light' && <Activity size={12} className="text-primary animate-tech-pulse" />}
                         </div>
-                     </div>
-
-                     <div className="lg:w-1/3">
-                        <div className="h-full min-h-[300px] rounded-3xl bg-slate-50 border border-slate-200 border-dashed p-6 flex flex-col items-center justify-center relative overflow-hidden">
-                           <span className="text-[10px] font-black uppercase text-slate-300 absolute top-4 left-6">Live Preview</span>
-                           <div className="w-full max-w-[240px] rounded-2xl bg-white shadow-2xl border border-slate-100 overflow-hidden animate-fade-up">
-                              <div className="p-3 bg-blue-600 text-white flex items-center justify-between" style={{ backgroundColor: themeColor }}>
-                                 <div className="flex items-center gap-2">
-                                    <div className="h-2 w-2 rounded-full bg-green-400" />
-                                    <span className="text-[10px] font-bold">Concierge Live</span>
-                                 </div>
-                                 <div className="h-3 w-3 bg-white/20 rounded-full" />
-                              </div>
-                              <div className="p-4 space-y-3">
-                                 <div className="bg-slate-100 p-2 rounded-lg rounded-tl-none w-3/4 text-[9px] font-medium leading-tight">
-                                    Hello! How can I assist you today?
-                                 </div>
-                                 <div className="bg-blue-100 p-2 rounded-lg rounded-tr-none w-3/4 ml-auto text-[9px] font-medium leading-tight text-blue-600" style={{ backgroundColor: `${themeColor}15`, color: themeColor }}>
-                                    I need to track my order.
-                                 </div>
-                              </div>
-                              <div className="p-3 border-t border-slate-100 flex items-center gap-2">
-                                 <div className="flex-1 h-6 bg-slate-50 rounded-full" />
-                                 <div className="h-4 w-4 text-blue-600" style={{ color: themeColor }}>
-                                    <ArrowRight className="h-4 w-4" />
-                                 </div>
-                              </div>
-                           </div>
+                        <div className="text-left mt-2">
+                           <p className="text-[11px] font-bold uppercase tracking-widest">Light Protocol</p>
                         </div>
-                     </div>
+                     </button>
                   </div>
-               </Card>
-            </div>
-          )}
+               </div>
+             </div>
+           )}
 
           {activeTab === 'notifications' && (
-            <div className="space-y-6 animate-in slide-in-from-right-4 duration-500">
+            <div className="space-y-4">
                {[
-                 { id: 'desktop', title: 'Desktop Alerts', desc: 'Receive push notifications even when Concierge is in the background.', icon: Monitor, defaultChecked: true },
-                 { id: 'email', title: 'Email Summaries', desc: 'Get a daily digest of missed chats and engagement metrics.', icon: Mail, defaultChecked: false },
-                 { id: 'sound', title: 'Sound Notifications', desc: 'Play a subtle alert sound for incoming messages.', icon: Volume2, defaultChecked: true },
+                 { id: 'desktop', title: 'Desktop_Relay', desc: 'Push priority signal alerts to secondary hardware nodes.', icon: Monitor },
+                 { id: 'email', title: 'Digest_Snapshot', icon: Mail, desc: 'Temporal analysis report delivered to operator inbox.' },
+                 { id: 'sound', title: 'Acoustic_Signals', desc: 'Synthesized audio cues for critical event detection.', icon: Volume2 },
                ].map((pref) => (
-                 <Card key={pref.id} className="rounded-2xl border-slate-200 shadow-sm p-6 flex items-center justify-between group hover:border-blue-600/30 transition-all">
-                    <div className="flex items-center gap-4">
-                       <div className="h-12 w-12 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 group-hover:text-blue-600 transition-colors">
-                          <pref.icon className="h-6 w-6" />
+                 <div key={pref.id} className="tech-card p-6 flex items-center justify-between group hover:border-primary/30 transition-all border-primary/10">
+                    <div className="flex items-center gap-5">
+                       <div className="h-12 w-12 border border-border flex items-center justify-center text-muted-foreground group-hover:text-primary transition-colors">
+                          <pref.icon size={20} />
                        </div>
                        <div>
-                          <p className="text-sm font-bold text-slate-900">{pref.title}</p>
-                          <p className="text-[11px] font-medium text-slate-400 leading-tight mt-0.5">{pref.desc}</p>
+                          <p className="text-[11px] font-bold uppercase tracking-widest text-foreground">{pref.title}</p>
+                          <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-widest opacity-50 mt-1.5 max-w-sm">{pref.desc}</p>
                        </div>
                     </div>
-                    <div className={cn(
-                       "h-6 w-11 rounded-full p-1 cursor-pointer transition-all duration-300",
-                       pref.defaultChecked ? "bg-blue-600" : "bg-slate-200"
+                    <button className={cn(
+                       "h-5 w-10 border transition-all relative",
+                       pref.id === 'desktop' || pref.id === 'sound' ? "border-primary bg-primary/10" : "border-border bg-muted/20"
                     )}>
                        <div className={cn(
-                         "h-4 w-4 bg-white rounded-full shadow-sm transition-transform duration-300",
-                         pref.defaultChecked ? "translate-x-5" : "translate-x-0"
+                         "h-full w-5 transition-transform",
+                         pref.id === 'desktop' || pref.id === 'sound' ? "bg-primary translate-x-full" : "bg-muted-foreground translate-x-0 opacity-30"
                        )} />
-                    </div>
-                 </Card>
+                    </button>
+                 </div>
                ))}
             </div>
           )}
         </main>
       </div>
 
-      {/* Footer Branding */}
-      <footer className="p-8 pt-4 border-t border-slate-200 flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-400">
-         <div className="flex items-center gap-2">
-            <span className="text-slate-900">Concierge.</span>
-            <span>Powered by Digital Concierge AI</span>
+      {/* Persistence Ledger Footer */}
+      <footer className="p-6 border-t border-border bg-muted/10 flex justify-between items-center text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+         <div className="flex items-center gap-3">
+            <span className="text-foreground">Concierge_OS.</span>
+            <span className="opacity-30">|</span>
+            <span>Kernel_Persistence_Ledger</span>
          </div>
          <div className="flex items-center gap-6">
-            <a href="#" className="hover:text-blue-600 transition-colors">Terms of Service</a>
-            <a href="#" className="hover:text-blue-600 transition-colors">Privacy Policy</a>
-            <a href="#" className="hover:text-blue-600 transition-colors">System Status</a>
+            <a href="#" className="hover:text-primary transition-colors">Log_Registry</a>
+            <a href="#" className="hover:text-primary transition-colors">Security_Policy</a>
+            <a href="#" className="hover:text-primary transition-colors">Core_Status</a>
          </div>
       </footer>
     </div>

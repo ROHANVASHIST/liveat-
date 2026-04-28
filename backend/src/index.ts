@@ -32,7 +32,8 @@ app.use(cors({
   credentials: true,
 }));
 app.use(morgan('dev'));
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ limit: '5mb', extended: true }));
 app.use(session({
   secret: 'liveat-secret-key-change-in-production',
   resave: false,
@@ -206,7 +207,15 @@ app.post('/api/auth/signup', async (req, res) => {
       console.error('Error inserting user into DB during signup:', dbError);
     }
 
-    res.json({ user: data.user });
+    const userData = { id: data.user?.id, email: email, name: name, avatar: null };
+
+    req.login(userData, (loginErr) => {
+      if (loginErr) {
+        console.error('Login error after signup:', loginErr);
+        return res.status(500).json({ error: 'Failed to establish session' });
+      }
+      res.json(userData);
+    });
   } catch (error) {
     console.error('Unexpected error in signup route:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -265,7 +274,13 @@ app.post('/api/auth/signin', async (req, res) => {
       return res.json(newUser);
     }
 
-    res.json(user);
+    req.login(user, (loginErr) => {
+      if (loginErr) {
+        console.error('Login error after signin:', loginErr);
+        return res.status(500).json({ error: 'Failed to establish session' });
+      }
+      res.json(user);
+    });
   } catch (error) {
     console.error('Unexpected error in signin route:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -473,6 +488,10 @@ app.post('/api/upload/base64', async (req, res) => {
   }
 });
 
+app.get('/api/online-count', (req, res) => {
+  res.json({ count: clients.size });
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -499,8 +518,8 @@ wss.on('connection', (ws) => {
     const message = JSON.parse(data.toString());
     
     if (message.type === 'join') {
-      clients.set(message.userId, { id: message.userId, name: message.userName, ws });
-      console.log(`Client ${message.userId} joined as ${message.userName}`);
+      clients.set(clientId, { id: message.userId, name: message.userName, ws });
+      console.log(`Client ${message.userId} joined as ${message.userName} on connection ${clientId}`);
       
       broadcastUserCount();
       
@@ -699,72 +718,11 @@ function broadcastUserCount() {
 }
 
 // ============================================
-// 7-Day Cleanup Job — runs every 6 hours
+// 7-Day Cleanup Job — runs every 6 hours (DISABLED)
 // ============================================
-async function cleanupExpiredMessages() {
-  console.log('[Cleanup] Starting expired message cleanup...');
-  try {
-    // 1. Find expired messages that have media in storage
-    const { data: expiredWithMedia } = await supabase
-      .from('messages')
-      .select('id, media_storage_path')
-      .lt('expires_at', new Date().toISOString())
-      .not('media_storage_path', 'is', null);
-
-    // 2. Delete media files from Supabase Storage
-    if (expiredWithMedia && expiredWithMedia.length > 0) {
-      const paths = expiredWithMedia
-        .map((m: any) => m.media_storage_path)
-        .filter(Boolean);
-
-      if (paths.length > 0) {
-        const { error: storageError } = await supabase.storage
-          .from('chat-media')
-          .remove(paths);
-
-        if (storageError) {
-          console.error('[Cleanup] Storage deletion error:', storageError);
-        } else {
-          console.log(`[Cleanup] Deleted ${paths.length} media files from storage`);
-        }
-      }
-    }
-
-    // 3. Delete expired messages from database
-    const { error: deleteError, count } = await supabase
-      .from('messages')
-      .delete({ count: 'exact' })
-      .lt('expires_at', new Date().toISOString());
-
-    if (deleteError) {
-      console.error('[Cleanup] Message deletion error:', deleteError);
-    } else {
-      console.log(`[Cleanup] Deleted ${count || 0} expired messages`);
-    }
-
-    // 4. Delete expired status updates
-    const { error: statusError } = await supabase
-      .from('status_updates')
-      .delete()
-      .lt('expires_at', new Date().toISOString());
-
-    if (statusError) {
-      console.error('[Cleanup] Status cleanup error:', statusError);
-    }
-
-    console.log('[Cleanup] Cleanup complete');
-  } catch (error) {
-    console.error('[Cleanup] Unexpected error:', error);
-  }
-}
-
-// Run cleanup on startup
-cleanupExpiredMessages();
-
-// Schedule cleanup every 6 hours (in milliseconds)
-const CLEANUP_INTERVAL = 6 * 60 * 60 * 1000;
-setInterval(cleanupExpiredMessages, CLEANUP_INTERVAL);
-console.log(`[Cleanup] Scheduled every ${CLEANUP_INTERVAL / 1000 / 60 / 60} hours`);
+// async function cleanupExpiredMessages() { ... }
+// cleanupExpiredMessages();
+// setInterval(cleanupExpiredMessages, ...);
 
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
