@@ -4,7 +4,19 @@ import { Badge } from '../badge';
 import { Button } from '../button';
 import { Input } from '../input';
 import { cn } from '@/lib/utils';
-import { Search, Plus, Settings, Users, MessageSquare, ChartBar as BarChart3, LogOut, Bell, MoveVertical as MoreVertical, ChevronRight, Circle } from 'lucide-react';
+import { 
+  Search, 
+  Plus, 
+  Settings, 
+  Users, 
+  MessageSquare,
+  BarChart3,
+  LogOut,
+  Bell,
+  MoreVertical,
+  ChevronRight,
+  Circle
+} from 'lucide-react';
 import { ScrollArea } from '../scroll-area';
 import { AppIcon } from '../app-icon';
 
@@ -15,7 +27,6 @@ interface ChatUser {
   status: 'online' | 'offline' | 'away';
   lastMessage?: string;
   lastMessageTime?: Date;
-  email?: string;
 }
 
 interface ChatRoom {
@@ -32,7 +43,6 @@ interface ChatListProps {
   users: ChatUser[];
   currentRoomId?: string;
   currentUserId?: string;
-  activeChatUserId?: string | null;
   onSelectRoom: (roomId: string) => void;
   onSelectUser: (userId: string) => void;
   onSelectNav?: (nav: string) => void;
@@ -46,7 +56,6 @@ export const ChatList: React.FC<ChatListProps> = ({
   users,
   currentRoomId,
   currentUserId,
-  activeChatUserId,
   onSelectRoom,
   onSelectUser,
   onSelectNav,

@@ -12,7 +12,7 @@ import { Avatar, AvatarFallback, AvatarImage } from './components/ui/avatar';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
 );
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL 
@@ -468,7 +468,6 @@ function App() {
           users={users}
           currentRoomId={activeRoomId}
           currentUserId={currentUserId || currentUser}
-          activeChatUserId={activeChatUserId}
           onSelectRoom={(id) => {
             setActiveRoomId(id);
             setActiveChatUserId(null);
