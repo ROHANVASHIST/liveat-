@@ -8,6 +8,11 @@ import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createClient } from '@supabase/supabase-js';
+import { messageService } from './services/messageService';
+import { pinService } from './services/pinService';
+import { blockService } from './services/blockService';
+import { notificationService } from './services/notificationService';
+import { analyticsService } from './services/analyticsService';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -495,6 +500,307 @@ app.get('/api/online-count', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// ============================================
+// FEATURE: MESSAGE SEARCH
+// ============================================
+app.get('/api/messages/search', async (req, res) => {
+  try {
+    const { query, roomId, senderId, limit = 50, offset = 0 } = req.query;
+
+    if (!query) {
+      return res.status(400).json({ error: 'Search query is required' });
+    }
+
+    const results = await messageService.searchMessages(
+      query as string,
+      roomId as string,
+      senderId as string,
+      parseInt(limit as string) || 50,
+      parseInt(offset as string) || 0
+    );
+
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to search messages' });
+  }
+});
+
+// ============================================
+// FEATURE: MESSAGE PINNING
+// ============================================
+app.post('/api/messages/:messageId/pin', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { messageId } = req.params;
+    const { roomId } = req.body;
+    const userId = (req.user as any).id;
+
+    if (!roomId) {
+      return res.status(400).json({ error: 'Room ID is required' });
+    }
+
+    const data = await pinService.pinMessage(messageId, roomId, userId);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to pin message' });
+  }
+});
+
+app.delete('/api/messages/:messageId/pin', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { messageId } = req.params;
+    const { roomId } = req.body;
+
+    if (!roomId) {
+      return res.status(400).json({ error: 'Room ID is required' });
+    }
+
+    const result = await pinService.unpinMessage(messageId, roomId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to unpin message' });
+  }
+});
+
+app.get('/api/rooms/:roomId/pinned-messages', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const pinnedMessages = await pinService.getPinnedMessages(roomId);
+    res.json(pinnedMessages);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch pinned messages' });
+  }
+});
+
+// ============================================
+// FEATURE: USER BLOCKING
+// ============================================
+app.post('/api/users/:userId/block', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { userId } = req.params;
+    const { reason } = req.body;
+    const blockerId = (req.user as any).id;
+
+    const data = await blockService.blockUser(blockerId, userId, reason);
+    res.json(data);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to block user' });
+  }
+});
+
+app.delete('/api/users/:userId/block', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { userId } = req.params;
+    const blockerId = (req.user as any).id;
+
+    const result = await blockService.unblockUser(blockerId, userId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to unblock user' });
+  }
+});
+
+app.get('/api/users/blocked', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const userId = (req.user as any).id;
+    const blockedUsers = await blockService.getBlockedUsers(userId);
+    res.json(blockedUsers);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch blocked users' });
+  }
+});
+
+app.get('/api/users/:userId/check-block', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    let blockerId = null;
+
+    if (req.isAuthenticated()) {
+      blockerId = (req.user as any).id;
+    }
+
+    if (!blockerId) {
+      return res.json({ isBlocked: false });
+    }
+
+    const isBlocked = await blockService.isUserBlocked(blockerId, userId);
+    res.json({ isBlocked });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to check block status' });
+  }
+});
+
+// ============================================
+// FEATURE: NOTIFICATIONS
+// ============================================
+app.get('/api/notifications/settings', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const userId = (req.user as any).id;
+    const settings = await notificationService.getOrCreateSettings(userId);
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch notification settings' });
+  }
+});
+
+app.patch('/api/notifications/settings', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const userId = (req.user as any).id;
+    const settings = await notificationService.updateSettings(userId, req.body);
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update notification settings' });
+  }
+});
+
+app.get('/api/notifications', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const userId = (req.user as any).id;
+    const { unread = false } = req.query;
+
+    const notifications = unread
+      ? await notificationService.getUnreadNotifications(userId)
+      : await notificationService.getAllNotifications(userId);
+
+    res.json(notifications);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
+app.post('/api/notifications/:notificationId/read', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { notificationId } = req.params;
+    const notification = await notificationService.markAsRead(notificationId);
+    res.json(notification);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to mark notification as read' });
+  }
+});
+
+app.post('/api/notifications/read-all', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const userId = (req.user as any).id;
+    const result = await notificationService.markAllAsRead(userId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to mark all notifications as read' });
+  }
+});
+
+app.delete('/api/notifications/:notificationId', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { notificationId } = req.params;
+    const result = await notificationService.deleteNotification(notificationId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete notification' });
+  }
+});
+
+// ============================================
+// FEATURE: ADVANCED ANALYTICS
+// ============================================
+app.get('/api/analytics/dashboard', async (req, res) => {
+  try {
+    const metrics = await analyticsService.getDashboardMetrics();
+    res.json(metrics);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch dashboard metrics' });
+  }
+});
+
+app.get('/api/analytics/engagement', async (req, res) => {
+  try {
+    const { period = '7d' } = req.query;
+    const metrics = await analyticsService.getEngagementMetrics(period as string);
+    res.json(metrics);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch engagement metrics' });
+  }
+});
+
+app.get('/api/analytics/rooms', async (req, res) => {
+  try {
+    const metrics = await analyticsService.getRoomMetrics();
+    res.json(metrics);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch room metrics' });
+  }
+});
+
+app.get('/api/analytics/heatmap', async (req, res) => {
+  try {
+    const { period = '7d' } = req.query;
+    const heatmap = await analyticsService.getActivityHeatmap(period as string);
+    res.json(heatmap);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch activity heatmap' });
+  }
+});
+
+app.get('/api/analytics/content-types', async (req, res) => {
+  try {
+    const distribution = await analyticsService.getContentTypeDistribution();
+    res.json(distribution);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch content type distribution' });
+  }
+});
+
+app.get('/api/analytics/retention', async (req, res) => {
+  try {
+    const retention = await analyticsService.getUserRetention();
+    res.json(retention);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch user retention' });
+  }
+});
+
 
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
