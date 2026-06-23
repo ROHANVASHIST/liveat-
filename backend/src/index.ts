@@ -13,6 +13,11 @@ import { pinService } from './services/pinService';
 import { blockService } from './services/blockService';
 import { notificationService } from './services/notificationService';
 import { analyticsService } from './services/analyticsService';
+import { broadcastService } from './services/broadcastService';
+import { securityService } from './services/securityService';
+import { voiceLocationService } from './services/voiceLocationService';
+import { securityHeaders, sanitizeInput, parameterPollution, corsOptions, securityLogger, preventOpenRedirects } from './security/enhancedSecurity';
+import { rateLimiter } from './security/rateLimiter';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,22 +36,40 @@ const supabase = createClient(
   process.env.SUPABASE_SECRET_KEY!
 );
 
-app.use(helmet());
-app.use(cors({
-  origin: true,
-  credentials: true,
-}));
+// Apply security middleware
+app.use(securityHeaders);
+app.use(cors(corsOptions));
 app.use(morgan('dev'));
-app.use(express.json({ limit: '5mb' }));
-app.use(express.urlencoded({ limit: '5mb', extended: true }));
+app.use(sanitizeInput);
+app.use(parameterPollution);
+app.use(securityLogger);
+app.use(preventOpenRedirects);
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+// Secure session configuration
 app.use(session({
-  secret: 'liveat-secret-key-change-in-production',
+  secret: process.env.SESSION_SECRET || 'liveat-secret-key-change-in-production',
+  name: 'concierge_session',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false }
+  rolling: true,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    sameSite: 'strict',
+    maxAge: 24 * 60 * 60 * 1000,
+  }
 }));
+
 app.use(passport.initialize());
 app.use(passport.session());
+
+// Apply rate limiting to all routes
+app.use(rateLimiter);
+
+// Raw body parser for voice uploads (must be before regular body parsers)
+app.use('/api/upload/voice', express.raw({ type: 'audio/webm', limit: '10mb' }));
 
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID!,
@@ -493,6 +516,45 @@ app.post('/api/upload/base64', async (req, res) => {
   }
 });
 
+// Voice message upload (multipart/form-data)
+app.post('/api/upload/voice', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const audioBuffer = req.body;
+    
+    if (!audioBuffer || audioBuffer.length === 0) {
+      return res.status(400).json({ error: 'No audio data provided' });
+    }
+
+    const fileName = `voice-${Date.now()}-${Math.random().toString(36).slice(2)}.webm`;
+    const filePath = `voice-messages/${fileName}`;
+
+    const { data, error } = await supabase.storage
+      .from('chat-media')
+      .upload(filePath, audioBuffer, {
+        contentType: 'audio/webm',
+        upsert: false,
+      });
+
+    if (error) {
+      console.error('Voice upload error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    const { data: urlData } = supabase.storage
+      .from('chat-media')
+      .getPublicUrl(filePath);
+
+    res.json({ url: urlData.publicUrl, path: filePath });
+  } catch (error) {
+    console.error('Voice upload error:', error);
+    res.status(500).json({ error: 'Voice upload failed' });
+  }
+});
+
 app.get('/api/online-count', (req, res) => {
   res.json({ count: clients.size });
 });
@@ -798,6 +860,509 @@ app.get('/api/analytics/retention', async (req, res) => {
     res.json(retention);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch user retention' });
+  }
+});
+
+// ============================================
+// FEATURE: BROADCAST LISTS
+// ============================================
+app.post('/api/broadcasts', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { name, recipientIds } = req.body;
+    const userId = (req.user as any).id;
+    const broadcast = await broadcastService.createBroadcast(name, userId, recipientIds);
+    res.json(broadcast);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create broadcast' });
+  }
+});
+
+app.get('/api/broadcasts', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const broadcasts = await broadcastService.getUserBroadcasts(userId);
+    res.json(broadcasts);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch broadcasts' });
+  }
+});
+
+app.get('/api/broadcasts/:id', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const broadcast = await broadcastService.getBroadcastDetails(req.params.id);
+    res.json(broadcast);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch broadcast details' });
+  }
+});
+
+app.delete('/api/broadcasts/:id', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const result = await broadcastService.deleteBroadcast(req.params.id, userId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete broadcast' });
+  }
+});
+
+app.post('/api/broadcasts/:id/send', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { content, roomId } = req.body;
+    const user = req.user as any;
+    const message = await broadcastService.sendBroadcastMessage(
+      req.params.id,
+      user.id,
+      user.name,
+      content,
+      roomId
+    );
+    res.json(message);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to send broadcast' });
+  }
+});
+
+// ============================================
+// FEATURE: TWO-FACTOR AUTHENTICATION
+// ============================================
+app.post('/api/security/2fa/setup', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const secret = securityService.generateTotpSecret();
+    const qrCodeUrl = `otpauth://totp/ChatApp:${userId}?secret=${secret}&issuer=ChatApp`;
+    await securityService.enableTwoFactor(userId, secret, qrCodeUrl);
+    res.json({ secret, qrCodeUrl });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to setup 2FA' });
+  }
+});
+
+app.post('/api/security/2fa/verify', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const { code } = req.body;
+    const result = await securityService.verifyAndEnableTwoFactor(userId, code);
+    res.json({ success: true, backupCodes: result.backupCodes });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to verify 2FA' });
+  }
+});
+
+app.post('/api/security/2fa/disable', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const { code } = req.body;
+    await securityService.disableTwoFactor(userId, code);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to disable 2FA' });
+  }
+});
+
+app.get('/api/security/2fa/status', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const enabled = await securityService.isTwoFactorEnabled(userId);
+    res.json({ enabled });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to check 2FA status' });
+  }
+});
+
+// ============================================
+// FEATURE: SESSION MANAGEMENT
+// ============================================
+app.get('/api/security/sessions', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const sessions = await securityService.getUserSessions(userId);
+    res.json(sessions);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch sessions' });
+  }
+});
+
+app.delete('/api/security/sessions/:id', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    await securityService.revokeSession(req.params.id, userId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to revoke session' });
+  }
+});
+
+app.post('/api/security/sessions/revoke-others', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const currentSessionId = req.body.currentSessionId;
+    await securityService.revokeOtherSessions(userId, currentSessionId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to revoke other sessions' });
+  }
+});
+
+// ============================================
+// FEATURE: PRIVACY SETTINGS
+// ============================================
+app.get('/api/security/privacy', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const settings = await securityService.getPrivacySettings(userId);
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch privacy settings' });
+  }
+});
+
+app.patch('/api/security/privacy', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const settings = await securityService.updatePrivacySettings(userId, req.body);
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update privacy settings' });
+  }
+});
+
+// ============================================
+// FEATURE: MESSAGE EDITING & DELETION
+// ============================================
+app.patch('/api/messages/:messageId', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { messageId } = req.params;
+    const { content, oldContent } = req.body;
+    const userId = (req.user as any).id;
+    const message = await securityService.editMessage(messageId, userId, content, oldContent);
+    res.json(message);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to edit message' });
+  }
+});
+
+app.delete('/api/messages/:messageId', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { messageId } = req.params;
+    const { deleteFor } = req.body;
+    const userId = (req.user as any).id;
+    await securityService.deleteMessage(messageId, userId, deleteFor);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to delete message' });
+  }
+});
+
+app.get('/api/messages/:messageId/edits', async (req, res) => {
+  try {
+    const edits = await securityService.getMessageEditHistory(req.params.messageId);
+    res.json(edits);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch edit history' });
+  }
+});
+
+// ============================================
+// FEATURE: STARRED MESSAGES
+// ============================================
+app.post('/api/messages/:messageId/star', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { messageId } = req.params;
+    const { roomId } = req.body;
+    const userId = (req.user as any).id;
+    const starred = await securityService.starMessage(messageId, userId, roomId);
+    res.json(starred);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to star message' });
+  }
+});
+
+app.delete('/api/messages/:messageId/star', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { messageId } = req.params;
+    const userId = (req.user as any).id;
+    await securityService.unstarMessage(messageId, userId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to unstar message' });
+  }
+});
+
+app.get('/api/messages/starred', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const starred = await securityService.getStarredMessages(userId);
+    res.json(starred);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch starred messages' });
+  }
+});
+
+// ============================================
+// FEATURE: AUTO-DELETE SETTINGS
+// ============================================
+app.get('/api/rooms/:roomId/auto-delete', async (req, res) => {
+  try {
+    const setting = await securityService.getAutoDelete(req.params.roomId);
+    res.json({ deleteAfter: setting });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch auto-delete settings' });
+  }
+});
+
+app.post('/api/rooms/:roomId/auto-delete', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { roomId } = req.params;
+    const { deleteAfter } = req.body;
+    const userId = (req.user as any).id;
+    const setting = await securityService.setAutoDelete(roomId, userId, deleteAfter);
+    res.json(setting);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to set auto-delete' });
+  }
+});
+
+// ============================================
+// FEATURE: VOICE MESSAGES
+// ============================================
+app.post('/api/voice-messages', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { messageId, duration, audioUrl, audioPath, waveformData } = req.body;
+    const userId = (req.user as any).id;
+    const voiceMessage = await voiceLocationService.saveVoiceMessage(messageId, userId, {
+      duration,
+      audioUrl,
+      audioPath,
+      waveformData,
+    });
+    res.json(voiceMessage);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to save voice message' });
+  }
+});
+
+app.get('/api/voice-messages/:messageId', async (req, res) => {
+  try {
+    const voiceMessage = await voiceLocationService.getVoiceMessage(req.params.messageId);
+    res.json(voiceMessage || null);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch voice message' });
+  }
+});
+
+// ============================================
+// FEATURE: LIVE LOCATION
+// ============================================
+app.post('/api/live-location/start', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const { roomId, latitude, longitude, accuracy } = req.body;
+    const location = await voiceLocationService.startLiveLocation(userId, roomId, {
+      latitude,
+      longitude,
+      accuracy,
+    });
+    res.json(location);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to start live location' });
+  }
+});
+
+app.post('/api/live-location/stop', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const { roomId } = req.body;
+    await voiceLocationService.stopLiveLocation(userId, roomId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to stop live location' });
+  }
+});
+
+app.get('/api/live-location/:roomId', async (req, res) => {
+  try {
+    const locations = await voiceLocationService.getActiveLocations(req.params.roomId);
+    res.json(locations);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch live locations' });
+  }
+});
+
+// ============================================
+// FEATURE: MESSAGE FORWARDING
+// ============================================
+app.post('/api/messages/:messageId/forward', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const forward = await voiceLocationService.trackForward(req.params.messageId, userId);
+    res.json(forward);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to track forward' });
+  }
+});
+
+app.get('/api/messages/:messageId/forward-count', async (req, res) => {
+  try {
+    const count = await voiceLocationService.getForwardCount(req.params.messageId);
+    res.json({ count });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get forward count' });
+  }
+});
+
+// ============================================
+// FEATURE: MESSAGE REPORTS
+// ============================================
+app.post('/api/messages/:messageId/report', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const { reason, description } = req.body;
+    const report = await voiceLocationService.reportMessage(req.params.messageId, userId, {
+      reason,
+      description,
+    });
+    res.json(report);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to report message' });
+  }
+});
+
+app.get('/api/reports/pending', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const reports = await voiceLocationService.getPendingReports();
+    res.json(reports);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch reports' });
+  }
+});
+
+// ============================================
+// FEATURE: MEDIA SETTINGS
+// ============================================
+app.get('/api/media/settings', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const settings = await voiceLocationService.getMediaSettings(userId);
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch media settings' });
+  }
+});
+
+app.patch('/api/media/settings', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const settings = await voiceLocationService.updateMediaSettings(userId, req.body);
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update media settings' });
+  }
+});
+
+// ============================================
+// MAINTENANCE ENDPOINTS
+// ============================================
+app.post('/api/admin/cleanup/locations', async (req, res) => {
+  try {
+    await voiceLocationService.cleanupExpiredLocations();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to cleanup locations' });
+  }
+});
+
+app.post('/api/admin/cleanup/messages', async (req, res) => {
+  try {
+    await voiceLocationService.cleanupOldMessages();
+    await securityService.runAutoDeleteCleanup();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to cleanup messages' });
   }
 });
 

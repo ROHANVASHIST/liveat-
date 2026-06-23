@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS messages (
   media_url TEXT,
   media_storage_path TEXT,
   status TEXT DEFAULT 'sent',
+  is_edited BOOLEAN DEFAULT false,
+  deleted_for BOOLEAN DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '7 days')
 );
@@ -69,73 +71,177 @@ CREATE TABLE IF NOT EXISTS status_updates (
 );
 
 -- ============================================
--- NEW TABLES FOR FEATURES
+-- NEW TABLES FOR WHATSAPP-LIKE FEATURES
 -- ============================================
 
--- Message Pinning: Track pinned messages per room
-CREATE TABLE IF NOT EXISTS pinned_messages (
+-- Voice messages
+CREATE TABLE IF NOT EXISTS voice_messages (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-  room_id TEXT NOT NULL,
-  pinned_by TEXT NOT NULL,
-  pinned_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE(message_id, room_id)
+  message_id UUID REFERENCES messages(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL,
+  duration INTEGER NOT NULL,
+  audio_url TEXT,
+  audio_path TEXT,
+  waveform_data JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- User Blocking: Track blocked users
-CREATE TABLE IF NOT EXISTS user_blocks (
+-- Message edits history
+CREATE TABLE IF NOT EXISTS message_edits (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  blocker_id TEXT NOT NULL,
-  blocked_user_id TEXT NOT NULL,
-  reason TEXT,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE(blocker_id, blocked_user_id)
+  message_id UUID REFERENCES messages(id) ON DELETE CASCADE,
+  old_content TEXT NOT NULL,
+  edited_by TEXT NOT NULL,
+  edited_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Notification Settings: User preferences
-CREATE TABLE IF NOT EXISTS notification_settings (
+-- Broadcast lists
+CREATE TABLE IF NOT EXISTS broadcast_lists (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id TEXT NOT NULL UNIQUE,
-  sound_enabled BOOLEAN DEFAULT true,
-  desktop_enabled BOOLEAN DEFAULT true,
-  email_enabled BOOLEAN DEFAULT false,
-  mute_until TIMESTAMP WITH TIME ZONE,
-  muted_rooms TEXT[] DEFAULT '{}',
+  name TEXT NOT NULL,
+  created_by TEXT NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Notifications: User notification log
-CREATE TABLE IF NOT EXISTS notifications (
+CREATE TABLE IF NOT EXISTS broadcast_recipients (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  broadcast_id UUID REFERENCES broadcast_lists(id) ON DELETE CASCADE,
+  recipient_id TEXT NOT NULL,
+  added_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(broadcast_id, recipient_id)
+);
+
+-- Starred messages (saved messages)
+CREATE TABLE IF NOT EXISTS starred_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  message_id UUID REFERENCES messages(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL,
-  type TEXT NOT NULL,
-  actor_id TEXT,
-  room_id TEXT,
-  message_id UUID,
-  actor_name TEXT,
-  title TEXT,
-  content TEXT,
-  read_at TIMESTAMP WITH TIME ZONE,
+  room_id TEXT NOT NULL,
+  starred_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(message_id, user_id)
+);
+
+-- Message forwarding tracking
+CREATE TABLE IF NOT EXISTS forwarded_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  original_message_id UUID REFERENCES messages(id) ON DELETE CASCADE,
+  forwarded_by TEXT NOT NULL,
+  forward_count INTEGER DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Analytics Snapshots: Store aggregated data
-CREATE TABLE IF NOT EXISTS analytics_snapshots (
+-- Live location sharing
+CREATE TABLE IF NOT EXISTS live_locations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  metric_type TEXT NOT NULL,
-  metric_name TEXT NOT NULL,
-  value BIGINT,
+  user_id TEXT NOT NULL,
+  room_id TEXT NOT NULL,
+  latitude DOUBLE PRECISION NOT NULL,
+  longitude DOUBLE PRECISION NOT NULL,
+  accuracy DOUBLE PRECISION,
+  expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '1 hour'),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 2FA settings
+CREATE TABLE IF NOT EXISTS two_factor_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT NOT NULL UNIQUE,
+  enabled BOOLEAN DEFAULT false,
+  secret_key TEXT,
+  backup_codes TEXT[],
+  qr_code_url TEXT,
+  verified_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Active sessions
+CREATE TABLE IF NOT EXISTS active_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT NOT NULL,
+  device TEXT NOT NULL,
+  location TEXT,
+  ip_address TEXT,
+  user_agent TEXT,
+  last_active TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  is_current_session BOOLEAN DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- User privacy settings
+CREATE TABLE IF NOT EXISTS privacy_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT NOT NULL UNIQUE,
+  last_seen VISIBILITY DEFAULT 'everyone',
+  profile_photo VISIBILITY DEFAULT 'everyone',
+  status VISIBILITY DEFAULT 'everyone',
+  read_receipts BOOLEAN DEFAULT true,
+  online_status BOOLEAN DEFAULT true,
+  group_invites VISIBILITY DEFAULT 'everyone',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Media quality settings
+CREATE TABLE IF NOT EXISTS media_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT NOT NULL UNIQUE,
+  image_quality TEXT DEFAULT 'auto',
+  video_quality TEXT DEFAULT 'auto',
+  voice_message_quality TEXT DEFAULT 'standard',
+  auto_download_wifi BOOLEAN DEFAULT true,
+  auto_download_cellular BOOLEAN DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Chat auto-delete settings
+CREATE TABLE IF NOT EXISTS chat_auto_delete (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  room_id TEXT NOT NULL,
+  delete_after TEXT DEFAULT 'off', -- 'off', '24h', '7d', '365d'
+  created_by TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(room_id)
+);
+
+-- Message reports
+CREATE TABLE IF NOT EXISTS message_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  message_id UUID REFERENCES messages(id) ON DELETE CASCADE,
+  reported_by TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  description TEXT,
+  status TEXT DEFAULT 'pending', -- 'pending', 'reviewed', 'dismissed', 'action_taken'
+  reviewed_by TEXT,
+  reviewed_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- User security logs
+CREATE TABLE IF NOT EXISTS security_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT NOT NULL,
+  event_type TEXT NOT NULL, -- 'login', 'logout', 'password_change', '2fa_enable', '2fa_disable', 'session_revoke'
+  ip_address TEXT,
+  device_info TEXT,
+  success BOOLEAN DEFAULT true,
   metadata JSONB,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+VISIBILITY AS ENUM ('everyone', 'contacts', 'nobody');
 
 -- Create indexes
 CREATE INDEX IF NOT EXISTS idx_messages_room_id ON messages(room_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_expires_at ON messages(expires_at);
+CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
 CREATE INDEX IF NOT EXISTS idx_message_reactions_message_id ON message_reactions(message_id);
 CREATE INDEX IF NOT EXISTS idx_group_members_room_id ON group_members(room_id);
 CREATE INDEX IF NOT EXISTS idx_status_updates_user_id ON status_updates(user_id);
@@ -147,8 +253,31 @@ CREATE INDEX IF NOT EXISTS idx_user_blocks_blocker_id ON user_blocks(blocker_id)
 CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked_user_id ON user_blocks(blocked_user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_read_at ON notifications(read_at);
 CREATE INDEX IF NOT EXISTS idx_analytics_snapshots_metric_type ON analytics_snapshots(metric_type);
 CREATE INDEX IF NOT EXISTS idx_analytics_snapshots_created_at ON analytics_snapshots(created_at);
+
+-- New Feature Indexes
+CREATE INDEX IF NOT EXISTS idx_voice_messages_message_id ON voice_messages(message_id);
+CREATE INDEX IF NOT EXISTS idx_voice_messages_user_id ON voice_messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_message_edits_message_id ON message_edits(message_id);
+CREATE INDEX IF NOT EXISTS idx_broadcast_lists_created_by ON broadcast_lists(created_by);
+CREATE INDEX IF NOT EXISTS idx_broadcast_recipients_broadcast_id ON broadcast_recipients(broadcast_id);
+CREATE INDEX IF NOT EXISTS idx_starred_messages_user_id ON starred_messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_starred_messages_room_id ON starred_messages(room_id);
+CREATE INDEX IF NOT EXISTS idx_forwarded_messages_original_id ON forwarded_messages(original_message_id);
+CREATE INDEX IF NOT EXISTS idx_live_locations_user_id ON live_locations(user_id);
+CREATE INDEX IF NOT EXISTS idx_live_locations_expires_at ON live_locations(expires_at);
+CREATE INDEX IF NOT EXISTS idx_two_factor_settings_user_id ON two_factor_settings(user_id);
+CREATE INDEX IF NOT EXISTS idx_active_sessions_user_id ON active_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_active_sessions_last_active ON active_sessions(last_active);
+CREATE INDEX IF NOT EXISTS idx_privacy_settings_user_id ON privacy_settings(user_id);
+CREATE INDEX IF NOT EXISTS idx_media_settings_user_id ON media_settings(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_auto_delete_room_id ON chat_auto_delete(room_id);
+CREATE INDEX IF NOT EXISTS idx_message_reports_message_id ON message_reports(message_id);
+CREATE INDEX IF NOT EXISTS idx_message_reports_status ON message_reports(status);
+CREATE INDEX IF NOT EXISTS idx_security_logs_user_id ON security_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_security_logs_created_at ON security_logs(created_at);
 
 -- Insert default rooms with UUIDs
 INSERT INTO rooms (id, name, description, type) VALUES
