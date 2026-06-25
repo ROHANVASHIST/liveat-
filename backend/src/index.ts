@@ -18,6 +18,7 @@ import { securityService } from './services/securityService';
 import { voiceLocationService } from './services/voiceLocationService';
 import { securityHeaders, sanitizeInput, parameterPollution, corsOptions, securityLogger, preventOpenRedirects } from './security/enhancedSecurity';
 import { rateLimiter } from './security/rateLimiter';
+import securityRoutes from './routes/securityRoutes';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -67,6 +68,9 @@ app.use(passport.session());
 
 // Apply rate limiting to all routes
 app.use(rateLimiter);
+
+// Security routes (MFA, Passkeys, Session Management)
+app.use('/api/security', securityRoutes);
 
 // Raw body parser for voice uploads (must be before regular body parsers)
 app.use('/api/upload/voice', express.raw({ type: 'audio/webm', limit: '10mb' }));
