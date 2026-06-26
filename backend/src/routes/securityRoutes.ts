@@ -1,8 +1,14 @@
 import { Router } from 'express';
+import { createClient } from '@supabase/supabase-js';
 import { mfaService } from '../services/mfaService';
 import { passkeyService } from '../services/passkeyService';
 import { tokenService } from '../services/tokenService';
 import { authenticateJWT, rateLimitByIP, logSecurityEvent, AuthRequest } from '../middleware/authMiddleware';
+
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SECRET_KEY!
+);
 
 const router = Router();
 
@@ -369,10 +375,7 @@ router.get('/audit-log', authenticateJWT, async (req: AuthRequest, res) => {
     const userId = req.userId!;
     const { limit = 50, offset = 0 } = req.query;
 
-    const { data, error } = await require('@supabase/supabase-js').createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_SECRET_KEY!
-    )
+    const { data, error } = await supabase
       .from('security_audit_log')
       .select('*')
       .eq('user_id', userId)

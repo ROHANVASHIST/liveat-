@@ -414,16 +414,16 @@ export const securityService = {
   }) {
     try {
       await supabase
-        .from('security_logs')
+        .from('security_audit_log')
         .insert({
           user_id: userId,
           event_type: eventType,
-          ip_address: details.ip,
-          device_info: details.device,
-          success: details.success ?? true,
-          metadata: details.metadata || {
+          event_data: details.metadata || {
             error: details.error,
           },
+          ip_address: details.ip,
+          user_agent: details.device,
+          success: details.success ?? true,
         });
     } catch (error) {
       console.error('Error logging security event:', error);
@@ -434,7 +434,7 @@ export const securityService = {
   async getSecurityLogs(userId: string, limit = 100) {
     try {
       const { data, error } = await supabase
-        .from('security_logs')
+        .from('security_audit_log')
         .select('*')
         .eq('user_id', userId)
         .order('created_at', { ascending: false })

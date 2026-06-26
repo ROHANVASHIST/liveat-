@@ -13,7 +13,6 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: true,
-
     proxy: {
       '/api': {
         target: 'http://localhost:3000',
@@ -22,9 +21,37 @@ export default defineConfig({
     },
   },
   build: {
+    // Code obfuscation & security hardening
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true,
+        drop_debugger: true,
+      },
+      output: {
+        comments: false,
+      },
+      mangle: {
+        toplevel: true,
+        properties: {
+          regex: /^_/,
+        },
+      },
+    },
+    sourcemap: false,  // Disable sourcemaps in production
+    target: 'es2020',
+    cssCodeSplit: true,
+    chunkSizeWarningLimit: 500,
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'index.html'),
+      },
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          encryption: ['crypto-js'],
+          ui: ['framer-motion', 'lucide-react'],
+        },
       },
     },
   },

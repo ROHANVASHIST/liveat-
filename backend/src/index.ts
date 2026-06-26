@@ -8,16 +8,20 @@ import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createClient } from '@supabase/supabase-js';
+import crypto from 'crypto';
 import { messageService } from './services/messageService';
 import { pinService } from './services/pinService';
 import { blockService } from './services/blockService';
 import { notificationService } from './services/notificationService';
 import { analyticsService } from './services/analyticsService';
 import { broadcastService } from './services/broadcastService';
+import { mfaService } from './services/mfaService';
 import { securityService } from './services/securityService';
 import { voiceLocationService } from './services/voiceLocationService';
 import { securityHeaders, sanitizeInput, parameterPollution, corsOptions, securityLogger, preventOpenRedirects } from './security/enhancedSecurity';
 import { rateLimiter } from './security/rateLimiter';
+import { authenticateJWT, checkAccountLockout } from './middleware/authMiddleware';
+import { tokenService } from './services/tokenService';
 import securityRoutes from './routes/securityRoutes';
 
 const app = express();
@@ -254,7 +258,7 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 });
 
-app.post('/api/auth/signin', async (req, res) => {
+app.post('/api/auth/signin', checkAccountLockout, async (req, res) => {
   try {
     const { email, password } = req.body;
     console.log('Signin attempt for:', email);
@@ -270,6 +274,11 @@ app.post('/api/auth/signin', async (req, res) => {
 
     if (error) {
       console.error('Supabase SignIn error:', error);
+      
+      // Track failed login attempt
+      const ip = req.ip || req.socket.remoteAddress || 'unknown';
+      await trackFailedLoginAttempt(null, email, ip);
+      
       return res.status(401).json({ error: error.message });
     }
 
@@ -288,7 +297,6 @@ app.post('/api/auth/signin', async (req, res) => {
 
     if (!user) {
       console.log('User not found in users table, creating entry...');
-      // Fallback: create user entry if missing
       const { data: newUser, error: createError } = await supabase
         .from('users')
         .insert({
@@ -303,8 +311,29 @@ app.post('/api/auth/signin', async (req, res) => {
         console.error('Error creating user entry:', createError);
         return res.status(500).json({ error: 'Failed to create user record' });
       }
+      
+      const mfaEnabled = await mfaService.isMFAEnabled(newUser.id);
+      if (mfaEnabled) {
+        return res.json({ ...newUser, requiresMFA: true });
+      }
+      
       return res.json(newUser);
     }
+
+    // Check if user has MFA enabled
+    const mfaEnabled = await mfaService.isMFAEnabled(user.id);
+    
+    if (mfaEnabled) {
+      return res.json({ 
+        ...user, 
+        requiresMFA: true,
+        mfaSessionToken: await generateMFASessionToken(user.id)
+      });
+    }
+
+    // Clear failed login attempts on success
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    await clearFailedLoginAttempts(email, ip);
 
     req.login(user, (loginErr) => {
       if (loginErr) {
@@ -315,6 +344,100 @@ app.post('/api/auth/signin', async (req, res) => {
     });
   } catch (error) {
     console.error('Unexpected error in signin route:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============================================
+// AUTH UNIFICATION: JWT Bridge - Converts JWT auth to session auth
+// ============================================
+app.post('/api/auth/jwt-bridge', async (req, res) => {
+  try {
+    // Get JWT from Authorization header
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'No JWT token provided' });
+    }
+
+    const token = authHeader.substring(7);
+    const payload = tokenService.verifyAccessToken(token);
+    
+    if (!payload) {
+      return res.status(401).json({ error: 'Invalid or expired JWT token' });
+    }
+
+    // Fetch user and establish session
+    const { data: user } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', payload.userId)
+      .single();
+
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    // Log the event before establishing session
+    try {
+      await supabase
+        .from('security_audit_log')
+        .insert({
+          user_id: user.id,
+          event_type: 'AUTH_BRIDGE_JWT_TO_SESSION',
+          success: true,
+          ip_address: req.ip,
+          user_agent: req.headers['user-agent'],
+        });
+    } catch (err) {
+      console.error('Failed to log auth bridge:', err);
+    }
+    req.login(user, (loginErr) => {
+      if (loginErr) {
+        return res.status(500).json({ error: 'Failed to establish session' });
+      }
+      res.json({ success: true, user });
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// MFA verification during login
+app.post('/api/auth/verify-mfa-login', async (req, res) => {
+  try {
+    const { mfaSessionToken, code } = req.body;
+    
+    if (!mfaSessionToken || !code) {
+      return res.status(400).json({ error: 'MFA session token and code are required' });
+    }
+
+    const userId = await verifyMFASessionToken(mfaSessionToken);
+    if (!userId) {
+      return res.status(401).json({ error: 'Invalid or expired MFA session' });
+    }
+
+    const verified = await mfaService.verifyMFAToken(userId, code);
+    if (!verified) {
+      return res.status(401).json({ error: 'Invalid MFA code' });
+    }
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    req.login(user, (loginErr) => {
+      if (loginErr) {
+        return res.status(500).json({ error: 'Failed to establish session' });
+      }
+      res.json(user);
+    });
+  } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -489,7 +612,6 @@ app.post('/api/upload/base64', async (req, res) => {
       return res.status(400).json({ error: 'No data provided' });
     }
 
-    // Strip out the data:image/...;base64, prefix if present
     const base64Clean = base64Data.replace(/^data:[^;]+;base64,/, '');
     const buffer = Buffer.from(base64Clean, 'base64');
 
@@ -943,7 +1065,7 @@ app.post('/api/broadcasts/:id/send', async (req, res) => {
 });
 
 // ============================================
-// FEATURE: TWO-FACTOR AUTHENTICATION
+// FEATURE: TWO-FACTOR AUTHENTICATION (Legacy - Redirect to MFA)
 // ============================================
 app.post('/api/security/2fa/setup', async (req, res) => {
   try {
@@ -951,10 +1073,13 @@ app.post('/api/security/2fa/setup', async (req, res) => {
       return res.status(401).json({ error: 'Not authenticated' });
     }
     const userId = (req.user as any).id;
-    const secret = securityService.generateTotpSecret();
-    const qrCodeUrl = `otpauth://totp/ChatApp:${userId}?secret=${secret}&issuer=ChatApp`;
-    await securityService.enableTwoFactor(userId, secret, qrCodeUrl);
-    res.json({ secret, qrCodeUrl });
+    const userEmail = (req.user as any).email || 'user@example.com';
+    const result = await mfaService.setupMFA(userId, userEmail);
+    res.json({
+      secret: result.secret,
+      qrCode: result.qrCodeDataUrl,
+      backupCodes: result.backupCodes,
+    });
   } catch (error) {
     res.status(500).json({ error: 'Failed to setup 2FA' });
   }
@@ -967,8 +1092,8 @@ app.post('/api/security/2fa/verify', async (req, res) => {
     }
     const userId = (req.user as any).id;
     const { code } = req.body;
-    const result = await securityService.verifyAndEnableTwoFactor(userId, code);
-    res.json({ success: true, backupCodes: result.backupCodes });
+    const result = await mfaService.verifyAndEnableMFA(userId, code);
+    res.json({ success: true, message: 'MFA enabled successfully' });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Failed to verify 2FA' });
   }
@@ -981,7 +1106,7 @@ app.post('/api/security/2fa/disable', async (req, res) => {
     }
     const userId = (req.user as any).id;
     const { code } = req.body;
-    await securityService.disableTwoFactor(userId, code);
+    await mfaService.disableMFA(userId, code);
     res.json({ success: true });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Failed to disable 2FA' });
@@ -994,7 +1119,7 @@ app.get('/api/security/2fa/status', async (req, res) => {
       return res.status(401).json({ error: 'Not authenticated' });
     }
     const userId = (req.user as any).id;
-    const enabled = await securityService.isTwoFactorEnabled(userId);
+    const enabled = await mfaService.isMFAEnabled(userId);
     res.json({ enabled });
   } catch (error) {
     res.status(500).json({ error: 'Failed to check 2FA status' });
@@ -1375,26 +1500,104 @@ const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ 
+  server,
+  verifyClient: (info, cb) => {
+    cb(true);
+  }
+});
 
 interface Client {
   id: string;
   name: string;
   ws: WebSocket;
+  authenticated: boolean;
+  joinedAt: Date;
+  messageCount: number;
+  lastMessageTime: number;
 }
 
 const clients: Map<string, Client> = new Map();
 
-wss.on('connection', (ws) => {
-  const clientId = Date.now().toString();
-  console.log('New client connected:', clientId);
+const WS_RATE_LIMIT = {
+  maxMessages: 30,
+  windowMs: 60000,
+  banThreshold: 5,
+};
+
+const wsRateLimitMap = new Map<string, { count: number; windowStart: number; violations: number }>();
+
+wss.on('connection', (ws, req) => {
+  const clientId = crypto.randomUUID();
+  const clientIP = req.socket.remoteAddress || 'unknown';
+  console.log('New WebSocket connection:', clientId, 'from', clientIP);
 
   ws.on('message', async (data) => {
-    const message = JSON.parse(data.toString());
+    const now = Date.now();
+    let rateRecord = wsRateLimitMap.get(clientIP);
+    
+    if (!rateRecord || rateRecord.windowStart < now - WS_RATE_LIMIT.windowMs) {
+      rateRecord = { count: 0, windowStart: now, violations: 0 };
+      wsRateLimitMap.set(clientIP, rateRecord);
+    }
+    
+    rateRecord.count++;
+    
+    if (rateRecord.count > WS_RATE_LIMIT.maxMessages) {
+      rateRecord.violations++;
+      if (rateRecord.violations >= WS_RATE_LIMIT.banThreshold) {
+        ws.close(1008, 'Rate limit exceeded - connection terminated');
+        return;
+      }
+      ws.send(JSON.stringify({ type: 'error', error: 'Rate limit exceeded. Slow down.' }));
+      return;
+    }
+
+    let message;
+    try {
+      message = JSON.parse(data.toString());
+    } catch {
+      ws.send(JSON.stringify({ type: 'error', error: 'Invalid message format' }));
+      return;
+    }
     
     if (message.type === 'join') {
-      clients.set(clientId, { id: message.userId, name: message.userName, ws });
-      console.log(`Client ${message.userId} joined as ${message.userName} on connection ${clientId}`);
+      const token = message.token;
+      if (!token) {
+        ws.send(JSON.stringify({ type: 'error', error: 'Authentication token required' }));
+        return;
+      }
+
+      const payload = tokenService.verifyAccessToken(token);
+      if (!payload) {
+        ws.send(JSON.stringify({ type: 'error', error: 'Invalid or expired token' }));
+        return;
+      }
+
+      if (payload.userId !== message.userId) {
+        ws.send(JSON.stringify({ type: 'error', error: 'User ID mismatch with token' }));
+        return;
+      }
+
+      clients.set(clientId, { 
+        id: message.userId, 
+        name: message.userName, 
+        ws,
+        authenticated: true,
+        joinedAt: new Date(),
+        messageCount: 0,
+        lastMessageTime: now,
+      });
+      console.log(`Authenticated client ${message.userId} joined as ${message.userName} on connection ${clientId}`);
+      
+      await supabase
+        .from('security_audit_log')
+        .insert({
+          user_id: message.userId,
+          event_type: 'WEBSOCKET_CONNECT',
+          success: true,
+          ip_address: clientIP,
+        });
       
       broadcastUserCount();
       
@@ -1405,7 +1608,14 @@ wss.on('connection', (ws) => {
         timestamp: new Date().toISOString(),
       });
     } else if (message.type === 'message') {
-      // Upload media to Supabase Storage if it's a base64 data URL
+      const client = clients.get(clientId);
+      if (!client || !client.authenticated) {
+        ws.send(JSON.stringify({ type: 'error', error: 'Authentication required' }));
+        return;
+      }
+      client.messageCount++;
+      client.lastMessageTime = now;
+      
       let mediaUrl = message.mediaUrl;
       let mediaStoragePath: string | null = null;
 
@@ -1442,7 +1652,6 @@ wss.on('connection', (ws) => {
         }
       }
 
-      // Calculate message expiry (7 days from now)
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 7);
 
@@ -1506,7 +1715,6 @@ wss.on('connection', (ws) => {
         roomType: room.type,
       });
     } else if (message.type === 'load_messages') {
-      // Only load messages from the last 7 days
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
@@ -1593,11 +1801,105 @@ function broadcastUserCount() {
 }
 
 // ============================================
+// BRUTE FORCE PROTECTION HELPERS
+// ============================================
+
+async function trackFailedLoginAttempt(userId: string | null, email: string, ipAddress: string) {
+  try {
+    const { data: existing } = await supabase
+      .from('failed_login_attempts')
+      .select('*')
+      .eq('email', email)
+      .eq('ip_address', ipAddress)
+      .maybeSingle();
+
+    if (existing) {
+      const newCount = existing.attempt_count + 1;
+      let lockedUntil = null;
+      
+      if (newCount >= 15) {
+        lockedUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      } else if (newCount >= 10) {
+        lockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      } else if (newCount >= 5) {
+        lockedUntil = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      }
+
+      await supabase
+        .from('failed_login_attempts')
+        .update({
+          attempt_count: newCount,
+          locked_until: lockedUntil,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id);
+    } else {
+      await supabase
+        .from('failed_login_attempts')
+        .insert({
+          user_id: userId,
+          email,
+          ip_address: ipAddress,
+          attempt_count: 1,
+        });
+    }
+  } catch (error) {
+    console.error('Error tracking failed login:', error);
+  }
+}
+
+async function clearFailedLoginAttempts(email: string, ipAddress: string) {
+  try {
+    await supabase
+      .from('failed_login_attempts')
+      .delete()
+      .eq('email', email)
+      .eq('ip_address', ipAddress);
+  } catch (error) {
+    console.error('Error clearing failed login attempts:', error);
+  }
+}
+
+// ============================================
+// MFA SESSION TOKEN HELPERS
+// ============================================
+
+const mfaSessionTokens = new Map<string, { userId: string; expiresAt: number }>();
+
+async function generateMFASessionToken(userId: string): Promise<string> {
+  const token = crypto.randomBytes(32).toString('hex');
+  mfaSessionTokens.set(token, {
+    userId,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+  });
+  return token;
+}
+
+async function verifyMFASessionToken(token: string): Promise<string | null> {
+  const session = mfaSessionTokens.get(token);
+  if (!session) return null;
+  
+  if (session.expiresAt < Date.now()) {
+    mfaSessionTokens.delete(token);
+    return null;
+  }
+  
+  mfaSessionTokens.delete(token);
+  return session.userId;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, session] of mfaSessionTokens.entries()) {
+    if (session.expiresAt < now) {
+      mfaSessionTokens.delete(token);
+    }
+  }
+}, 60 * 1000);
+
+// ============================================
 // 7-Day Cleanup Job — runs every 6 hours (DISABLED)
 // ============================================
-// async function cleanupExpiredMessages() { ... }
-// cleanupExpiredMessages();
-// setInterval(cleanupExpiredMessages, ...);
 
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
@@ -1607,4 +1909,3 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
   console.error(err.stack);
   res.status(500).json({ error: 'Internal server error' });
 });
-
