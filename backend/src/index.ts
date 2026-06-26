@@ -245,12 +245,12 @@ app.post('/api/auth/signup', async (req, res) => {
 
     const userData = { id: data.user?.id, email: email, name: name, avatar: null };
 
-    req.login(userData, (loginErr) => {
+    return req.login(userData, (loginErr) => {
       if (loginErr) {
         console.error('Login error after signup:', loginErr);
         return res.status(500).json({ error: 'Failed to establish session' });
       }
-      res.json(userData);
+      return res.json(userData);
     });
   } catch (error) {
     console.error('Unexpected error in signup route:', error);
@@ -335,12 +335,16 @@ app.post('/api/auth/signin', checkAccountLockout, async (req, res) => {
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
     await clearFailedLoginAttempts(email, ip);
 
-    req.login(user, (loginErr) => {
-      if (loginErr) {
-        console.error('Login error after signin:', loginErr);
-        return res.status(500).json({ error: 'Failed to establish session' });
-      }
-      res.json(user);
+    return new Promise<void>((resolve, reject) => {
+      req.login(user, (loginErr) => {
+        if (loginErr) {
+          console.error('Login error after signin:', loginErr);
+          res.status(500).json({ error: 'Failed to establish session' });
+          return reject(new Error('Login failed'));
+        }
+        res.json(user);
+        return resolve();
+      });
     });
   } catch (error) {
     console.error('Unexpected error in signin route:', error);

@@ -10,12 +10,13 @@ export const rateLimiter = rateLimit({
     retryAfter: 15
   },
   keyGenerator: (req: Request) => {
-    // Use user ID if authenticated, otherwise use IP
+    // Use user ID if authenticated, otherwise use IP with proper IPv6 handling
     const userId = (req as any).user?.id;
-    if (userId) return userId;
+    if (userId) return `user:${userId}`;
     
-    // Use standard IP extraction
-    return req.ip || req.socket.remoteAddress || 'unknown';
+    // Use the library's ipKeyGenerator for proper IPv6 support
+    const { ipKeyGenerator } = require('express-rate-limit');
+    return ipKeyGenerator(req.ip || req.socket.remoteAddress || 'unknown');
   },
   standardHeaders: true,
   legacyHeaders: false,

@@ -21,23 +21,8 @@ export default defineConfig({
     },
   },
   build: {
-    // Code obfuscation & security hardening
-    minify: 'terser',
-    terserOptions: {
-      compress: {
-        drop_console: true,
-        drop_debugger: true,
-      },
-      output: {
-        comments: false,
-      },
-      mangle: {
-        toplevel: true,
-        properties: {
-          regex: /^_/,
-        },
-      },
-    },
+    // Code minification & security hardening
+    minify: 'esbuild',
     sourcemap: false,  // Disable sourcemaps in production
     target: 'es2020',
     cssCodeSplit: true,
