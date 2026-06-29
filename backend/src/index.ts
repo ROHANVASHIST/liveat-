@@ -23,6 +23,17 @@ import { rateLimiter } from './security/rateLimiter';
 import { authenticateJWT, checkAccountLockout } from './middleware/authMiddleware';
 import { tokenService } from './services/tokenService';
 import securityRoutes from './routes/securityRoutes';
+import { encryptionService } from './services/encryptionService';
+import { callService } from './services/callService';
+import { chatbotService } from './services/chatbotService';
+import { scheduleService } from './services/scheduleService';
+import { pollService } from './services/pollService';
+import { taskService } from './services/taskService';
+import { eventService } from './services/eventService';
+import { bookmarkService } from './services/bookmarkService';
+import { folderService } from './services/folderService';
+import { themeService } from './services/themeService';
+import { syncService } from './services/syncService';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -467,10 +478,14 @@ app.get('/api/rooms', async (req, res) => {
       .select('*')
       .order('name');
 
-    if (error) throw error;
-    res.json(rooms);
-  } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
+    if (error) {
+      console.error('Supabase error fetching rooms:', error);
+      return res.status(500).json({ error: 'Failed to fetch rooms', details: error.message });
+    }
+    res.json(rooms || []);
+  } catch (error: any) {
+    console.error('Rooms endpoint error:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
@@ -691,6 +706,374 @@ app.get('/api/online-count', (req, res) => {
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ============================================
+// NEW FEATURES API ROUTES
+// ============================================
+
+// E2EE Encryption
+app.get('/api/encryption/key', (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+  const key = encryptionService.generateKey();
+  res.json({ key });
+});
+
+app.post('/api/encryption/encrypt', (req, res) => {
+  const { text, key } = req.body;
+  if (!text || !key) return res.status(400).json({ error: 'Text and key required' });
+  const result = encryptionService.encrypt(text, key);
+  res.json(result);
+});
+
+app.post('/api/encryption/decrypt', (req, res) => {
+  const { data, key } = req.body;
+  if (!data || !key) return res.status(400).json({ error: 'Data and key required' });
+  const result = encryptionService.decrypt(data, key);
+  res.json({ text: result });
+});
+
+// AI Chatbot
+app.post('/api/chatbot/message', async (req, res) => {
+  try {
+    const { message, userId } = req.body;
+    const response = await chatbotService.processMessage(message, userId);
+    res.json({ response });
+  } catch (error) {
+    res.status(500).json({ error: 'Chatbot error' });
+  }
+});
+
+app.get('/api/chatbot/smart-replies', async (req, res) => {
+  try {
+    const { message } = req.query;
+    const replies = await chatbotService.getSmartReplies(message as string);
+    res.json({ replies });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get smart replies' });
+  }
+});
+
+// Message Scheduling
+app.post('/api/schedule/message', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const result = await scheduleService.scheduleMessage({ ...req.body, senderId: userId });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to schedule message' });
+  }
+});
+
+app.get('/api/schedule/messages', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const messages = await scheduleService.getUserScheduledMessages(userId);
+    res.json(messages);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get scheduled messages' });
+  }
+});
+
+app.delete('/api/schedule/message/:id', async (req, res) => {
+  try {
+    await scheduleService.cancelScheduledMessage(req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to cancel scheduled message' });
+  }
+});
+
+// Polls
+app.post('/api/polls', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const { roomId, question, options, multipleChoice } = req.body;
+    const userId = (req.user as any).id;
+    const poll = await pollService.createPoll(roomId, userId, question, options, multipleChoice);
+    res.json(poll);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create poll' });
+  }
+});
+
+app.post('/api/polls/:id/vote', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const { optionIndex } = req.body;
+    await pollService.vote(req.params.id, userId, optionIndex);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(400).json({ error: 'Failed to vote' });
+  }
+});
+
+app.get('/api/polls/:id/results', async (req, res) => {
+  try {
+    const results = await pollService.getResults(req.params.id);
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get results' });
+  }
+});
+
+app.get('/api/rooms/:roomId/polls', async (req, res) => {
+  try {
+    const polls = await pollService.getRoomPolls(req.params.roomId);
+    res.json(polls);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get polls' });
+  }
+});
+
+// Tasks
+app.post('/api/tasks', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const { roomId, assignedTo, title, description, priority, dueDate } = req.body;
+    const userId = (req.user as any).id;
+    const task = await taskService.createTask(roomId, userId, { assignedTo, title, description, priority, dueDate });
+    res.json(task);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create task' });
+  }
+});
+
+app.patch('/api/tasks/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+    await taskService.updateStatus(req.params.id, status);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update task' });
+  }
+});
+
+app.get('/api/rooms/:roomId/tasks', async (req, res) => {
+  try {
+    const tasks = await taskService.getRoomTasks(req.params.roomId);
+    res.json(tasks);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get tasks' });
+  }
+});
+
+app.get('/api/tasks', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const tasks = await taskService.getUserTasks(userId);
+    res.json(tasks);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get tasks' });
+  }
+});
+
+// Events
+app.post('/api/events', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const { roomId, title, description, eventDate, duration, location } = req.body;
+    const userId = (req.user as any).id;
+    const event = await eventService.createEvent(roomId, userId, { title, description, eventDate, duration, location });
+    res.json(event);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create event' });
+  }
+});
+
+app.post('/api/events/:id/rsvp', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const { status } = req.body;
+    await eventService.rsvp(req.params.id, userId, status);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to RSVP' });
+  }
+});
+
+app.get('/api/rooms/:roomId/events', async (req, res) => {
+  try {
+    const events = await eventService.getRoomEvents(req.params.roomId);
+    res.json(events);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get events' });
+  }
+});
+
+// Bookmarks
+app.post('/api/bookmarks', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const { messageId, note } = req.body;
+    const bookmark = await bookmarkService.createBookmark(userId, messageId, note);
+    res.json(bookmark);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/bookmarks', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const bookmarks = await bookmarkService.getBookmarks(userId);
+    res.json(bookmarks);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get bookmarks' });
+  }
+});
+
+app.delete('/api/bookmarks/:id', async (req, res) => {
+  try {
+    await bookmarkService.deleteBookmark(req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete bookmark' });
+  }
+});
+
+// Chat Folders
+app.post('/api/folders', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const { name, icon, color } = req.body;
+    const folder = await folderService.createFolder(userId, name, icon, color);
+    res.json(folder);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create folder' });
+  }
+});
+
+app.get('/api/folders', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const folders = await folderService.getFolders(userId);
+    res.json(folders);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get folders' });
+  }
+});
+
+app.post('/api/folders/:id/rooms', async (req, res) => {
+  try {
+    const { roomId } = req.body;
+    await folderService.addRoomToFolder(req.params.id, roomId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to add room to folder' });
+  }
+});
+
+app.delete('/api/folders/:id/rooms/:roomId', async (req, res) => {
+  try {
+    await folderService.removeRoomFromFolder(req.params.id, req.params.roomId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to remove room from folder' });
+  }
+});
+
+app.get('/api/folders/:id/rooms', async (req, res) => {
+  try {
+    const rooms = await folderService.getFolderRooms(req.params.id);
+    res.json(rooms);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get folder rooms' });
+  }
+});
+
+// Themes
+app.post('/api/themes', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const { name, colors, background, font } = req.body;
+    const theme = await themeService.saveTheme(userId, name, colors, background, font);
+    res.json(theme);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to save theme' });
+  }
+});
+
+app.get('/api/themes', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const theme = await themeService.getTheme(userId);
+    res.json(theme || {});
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get theme' });
+  }
+});
+
+// Sync
+app.post('/api/sync', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const { deviceId, data } = req.body;
+    await syncService.syncUserData(userId, deviceId, data);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Sync failed' });
+  }
+});
+
+app.get('/api/sync/devices', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const devices = await syncService.getConnectedDevices(userId);
+    res.json(devices);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get devices' });
+  }
+});
+
+app.delete('/api/sync/devices/:id', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    await syncService.removeDevice(userId, req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to remove device' });
+  }
+});
+
+// Read Receipts
+app.post('/api/messages/:messageId/read', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    await supabase.from('message_read_receipts').upsert({
+      message_id: req.params.messageId, user_id: userId, read_at: new Date().toISOString()
+    });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to mark as read' });
+  }
+});
+
+app.get('/api/messages/:messageId/readers', async (req, res) => {
+  try {
+    const { data } = await supabase
+      .from('message_read_receipts')
+      .select('*, users!inner(name)')
+      .eq('message_id', req.params.messageId);
+    res.json(data || []);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get readers' });
+  }
 });
 
 // ============================================
