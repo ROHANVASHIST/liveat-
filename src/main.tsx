@@ -10,13 +10,14 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 );
 
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/service-worker.js')
-      .then((registration) => {
-        console.log('SW registered:', registration);
-      })
-      .catch((error) => {
-        console.log('SW registration failed:', error);
-      });
+  // Permanently unregister any ghost service workers that were aggressively caching the old UI.
+  navigator.serviceWorker.getRegistrations().then(function(registrations) {
+    for(let registration of registrations) {
+      registration.unregister().then(
+        function(boolean) {
+          console.log('Ghost cache cleared. SW unregistered.', boolean);
+        }
+      );
+    }
   });
 }

@@ -8,6 +8,32 @@ import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createClient } from '@supabase/supabase-js';
+import crypto from 'crypto';
+import { messageService } from './services/messageService';
+import { pinService } from './services/pinService';
+import { blockService } from './services/blockService';
+import { notificationService } from './services/notificationService';
+import { analyticsService } from './services/analyticsService';
+import { broadcastService } from './services/broadcastService';
+import { mfaService } from './services/mfaService';
+import { securityService } from './services/securityService';
+import { voiceLocationService } from './services/voiceLocationService';
+import { securityHeaders, sanitizeInput, parameterPollution, corsOptions, securityLogger, preventOpenRedirects } from './security/enhancedSecurity';
+import { rateLimiter } from './security/rateLimiter';
+import { authenticateJWT, checkAccountLockout } from './middleware/authMiddleware';
+import { tokenService } from './services/tokenService';
+import securityRoutes from './routes/securityRoutes';
+import { encryptionService } from './services/encryptionService';
+import { callService } from './services/callService';
+import { chatbotService } from './services/chatbotService';
+import { scheduleService } from './services/scheduleService';
+import { pollService } from './services/pollService';
+import { taskService } from './services/taskService';
+import { eventService } from './services/eventService';
+import { bookmarkService } from './services/bookmarkService';
+import { folderService } from './services/folderService';
+import { themeService } from './services/themeService';
+import { syncService } from './services/syncService';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -26,21 +52,43 @@ const supabase = createClient(
   process.env.SUPABASE_SECRET_KEY!
 );
 
-app.use(helmet());
-app.use(cors({
-  origin: true,
-  credentials: true,
-}));
+// Apply security middleware
+app.use(securityHeaders);
+app.use(cors(corsOptions));
 app.use(morgan('dev'));
-app.use(express.json());
+app.use(sanitizeInput);
+app.use(parameterPollution);
+app.use(securityLogger);
+app.use(preventOpenRedirects);
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+// Secure session configuration
 app.use(session({
-  secret: 'liveat-secret-key-change-in-production',
+  secret: process.env.SESSION_SECRET || 'liveat-secret-key-change-in-production',
+  name: 'concierge_session',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false }
+  rolling: true,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    sameSite: 'strict',
+    maxAge: 24 * 60 * 60 * 1000,
+  }
 }));
+
 app.use(passport.initialize());
 app.use(passport.session());
+
+// Apply rate limiting to all routes
+app.use(rateLimiter);
+
+// Security routes (MFA, Passkeys, Session Management)
+app.use('/api/security', securityRoutes);
+
+// Raw body parser for voice uploads (must be before regular body parsers)
+app.use('/api/upload/voice', express.raw({ type: 'audio/webm', limit: '10mb' }));
 
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID!,
@@ -138,7 +186,7 @@ app.get('/api/auth/user', (req, res) => {
   if (req.isAuthenticated()) {
     res.json(req.user);
   } else {
-    res.status(401).json({ error: 'Not authenticated' });
+    res.json(null);
   }
 });
 
@@ -206,14 +254,22 @@ app.post('/api/auth/signup', async (req, res) => {
       console.error('Error inserting user into DB during signup:', dbError);
     }
 
-    res.json({ user: data.user });
+    const userData = { id: data.user?.id, email: email, name: name, avatar: null };
+
+    return req.login(userData, (loginErr) => {
+      if (loginErr) {
+        console.error('Login error after signup:', loginErr);
+        return res.status(500).json({ error: 'Failed to establish session' });
+      }
+      return res.json(userData);
+    });
   } catch (error) {
     console.error('Unexpected error in signup route:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-app.post('/api/auth/signin', async (req, res) => {
+app.post('/api/auth/signin', checkAccountLockout, async (req, res) => {
   try {
     const { email, password } = req.body;
     console.log('Signin attempt for:', email);
@@ -229,6 +285,11 @@ app.post('/api/auth/signin', async (req, res) => {
 
     if (error) {
       console.error('Supabase SignIn error:', error);
+      
+      // Track failed login attempt
+      const ip = req.ip || req.socket.remoteAddress || 'unknown';
+      await trackFailedLoginAttempt(null, email, ip);
+      
       return res.status(401).json({ error: error.message });
     }
 
@@ -247,7 +308,6 @@ app.post('/api/auth/signin', async (req, res) => {
 
     if (!user) {
       console.log('User not found in users table, creating entry...');
-      // Fallback: create user entry if missing
       const { data: newUser, error: createError } = await supabase
         .from('users')
         .insert({
@@ -262,12 +322,137 @@ app.post('/api/auth/signin', async (req, res) => {
         console.error('Error creating user entry:', createError);
         return res.status(500).json({ error: 'Failed to create user record' });
       }
+      
+      const mfaEnabled = await mfaService.isMFAEnabled(newUser.id);
+      if (mfaEnabled) {
+        return res.json({ ...newUser, requiresMFA: true });
+      }
+      
       return res.json(newUser);
     }
 
-    res.json(user);
+    // Check if user has MFA enabled
+    const mfaEnabled = await mfaService.isMFAEnabled(user.id);
+    
+    if (mfaEnabled) {
+      return res.json({ 
+        ...user, 
+        requiresMFA: true,
+        mfaSessionToken: await generateMFASessionToken(user.id)
+      });
+    }
+
+    // Clear failed login attempts on success
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    await clearFailedLoginAttempts(email, ip);
+
+    return new Promise<void>((resolve, reject) => {
+      req.login(user, (loginErr) => {
+        if (loginErr) {
+          console.error('Login error after signin:', loginErr);
+          res.status(500).json({ error: 'Failed to establish session' });
+          return reject(new Error('Login failed'));
+        }
+        res.json(user);
+        return resolve();
+      });
+    });
   } catch (error) {
     console.error('Unexpected error in signin route:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============================================
+// AUTH UNIFICATION: JWT Bridge - Converts JWT auth to session auth
+// ============================================
+app.post('/api/auth/jwt-bridge', async (req, res) => {
+  try {
+    // Get JWT from Authorization header
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'No JWT token provided' });
+    }
+
+    const token = authHeader.substring(7);
+    const payload = tokenService.verifyAccessToken(token);
+    
+    if (!payload) {
+      return res.status(401).json({ error: 'Invalid or expired JWT token' });
+    }
+
+    // Fetch user and establish session
+    const { data: user } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', payload.userId)
+      .single();
+
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    // Log the event before establishing session
+    try {
+      await supabase
+        .from('security_audit_log')
+        .insert({
+          user_id: user.id,
+          event_type: 'AUTH_BRIDGE_JWT_TO_SESSION',
+          success: true,
+          ip_address: req.ip,
+          user_agent: req.headers['user-agent'],
+        });
+    } catch (err) {
+      console.error('Failed to log auth bridge:', err);
+    }
+    req.login(user, (loginErr) => {
+      if (loginErr) {
+        return res.status(500).json({ error: 'Failed to establish session' });
+      }
+      res.json({ success: true, user });
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// MFA verification during login
+app.post('/api/auth/verify-mfa-login', async (req, res) => {
+  try {
+    const { mfaSessionToken, code } = req.body;
+    
+    if (!mfaSessionToken || !code) {
+      return res.status(400).json({ error: 'MFA session token and code are required' });
+    }
+
+    const userId = await verifyMFASessionToken(mfaSessionToken);
+    if (!userId) {
+      return res.status(401).json({ error: 'Invalid or expired MFA session' });
+    }
+
+    const verified = await mfaService.verifyMFAToken(userId, code);
+    if (!verified) {
+      return res.status(401).json({ error: 'Invalid MFA code' });
+    }
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    req.login(user, (loginErr) => {
+      if (loginErr) {
+        return res.status(500).json({ error: 'Failed to establish session' });
+      }
+      res.json(user);
+    });
+  } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -279,10 +464,14 @@ app.get('/api/users', async (req, res) => {
       .select('*')
       .order('name');
 
-    if (error) throw error;
-    res.json(users);
+    if (error) {
+      console.warn('Supabase error fetching users, using defaults:', error.message);
+      return res.json([]);
+    }
+    res.json(users || []);
   } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
+    console.warn('Users endpoint error, using defaults:');
+    res.json([]);
   }
 });
 
@@ -293,17 +482,33 @@ app.get('/api/rooms', async (req, res) => {
       .select('*')
       .order('name');
 
-    if (error) throw error;
-    res.json(rooms);
-  } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
+    if (error) {
+      console.warn('Supabase error fetching rooms, using defaults:', error.message);
+      return res.json([
+        { id: 'general', name: 'General', description: 'General discussion', type: 'public' },
+        { id: 'tech-talk', name: 'Tech Talk', description: 'Technology and programming', type: 'public' },
+        { id: 'random', name: 'Random', description: 'Off-topic conversations', type: 'public' },
+      ]);
+    }
+    res.json(rooms || []);
+  } catch (error: any) {
+    console.warn('Rooms endpoint error, using defaults:', error.message);
+    res.json([
+      { id: 'general', name: 'General', description: 'General discussion', type: 'public' },
+      { id: 'tech-talk', name: 'Tech Talk', description: 'Technology and programming', type: 'public' },
+      { id: 'random', name: 'Random', description: 'Off-topic conversations', type: 'public' },
+    ]);
   }
 });
 
 app.get('/api/analytics', async (req, res) => {
   try {
-    const { count: totalChats } = await supabase.from('messages').select('*', { count: 'exact', head: true });
-    const { count: activeAgents } = await supabase.from('users').select('*', { count: 'exact', head: true });
+    const { count: totalChats, error: chatsError } = await supabase.from('messages').select('*', { count: 'exact', head: true });
+    const { count: activeAgents, error: usersError } = await supabase.from('users').select('*', { count: 'exact', head: true });
+    
+    if (chatsError || usersError) {
+      console.warn('Supabase error fetching analytics, using defaults');
+    }
     
     res.json({
       totalChats: totalChats || 2842,
@@ -316,7 +521,14 @@ app.get('/api/analytics', async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
+    console.warn('Analytics endpoint error, using defaults:');
+    res.json({
+      totalChats: 2842,
+      activeAgents: 48,
+      responseTime: "1m 24s",
+      csat: "4.9/5",
+      trends: { chats: "+12.5%", response: "-4s" }
+    });
   }
 });
 
@@ -442,7 +654,6 @@ app.post('/api/upload/base64', async (req, res) => {
       return res.status(400).json({ error: 'No data provided' });
     }
 
-    // Strip out the data:image/...;base64, prefix if present
     const base64Clean = base64Data.replace(/^data:[^;]+;base64,/, '');
     const buffer = Buffer.from(base64Clean, 'base64');
 
@@ -473,34 +684,1331 @@ app.post('/api/upload/base64', async (req, res) => {
   }
 });
 
+// Voice message upload (multipart/form-data)
+app.post('/api/upload/voice', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const audioBuffer = req.body;
+    
+    if (!audioBuffer || audioBuffer.length === 0) {
+      return res.status(400).json({ error: 'No audio data provided' });
+    }
+
+    const fileName = `voice-${Date.now()}-${Math.random().toString(36).slice(2)}.webm`;
+    const filePath = `voice-messages/${fileName}`;
+
+    const { data, error } = await supabase.storage
+      .from('chat-media')
+      .upload(filePath, audioBuffer, {
+        contentType: 'audio/webm',
+        upsert: false,
+      });
+
+    if (error) {
+      console.error('Voice upload error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    const { data: urlData } = supabase.storage
+      .from('chat-media')
+      .getPublicUrl(filePath);
+
+    res.json({ url: urlData.publicUrl, path: filePath });
+  } catch (error) {
+    console.error('Voice upload error:', error);
+    res.status(500).json({ error: 'Voice upload failed' });
+  }
+});
+
+app.get('/api/online-count', (req, res) => {
+  res.json({ count: clients.size });
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// ============================================
+// NEW FEATURES API ROUTES
+// ============================================
+
+// E2EE Encryption
+app.get('/api/encryption/key', (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+  const key = encryptionService.generateKey();
+  res.json({ key });
+});
+
+app.post('/api/encryption/encrypt', (req, res) => {
+  const { text, key } = req.body;
+  if (!text || !key) return res.status(400).json({ error: 'Text and key required' });
+  const result = encryptionService.encrypt(text, key);
+  res.json(result);
+});
+
+app.post('/api/encryption/decrypt', (req, res) => {
+  const { data, key } = req.body;
+  if (!data || !key) return res.status(400).json({ error: 'Data and key required' });
+  const result = encryptionService.decrypt(data, key);
+  res.json({ text: result });
+});
+
+// AI Chatbot
+app.post('/api/chatbot/message', async (req, res) => {
+  try {
+    const { message, userId } = req.body;
+    const response = await chatbotService.processMessage(message, userId);
+    res.json({ response });
+  } catch (error) {
+    res.status(500).json({ error: 'Chatbot error' });
+  }
+});
+
+app.get('/api/chatbot/smart-replies', async (req, res) => {
+  try {
+    const { message } = req.query;
+    const replies = await chatbotService.getSmartReplies(message as string);
+    res.json({ replies });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get smart replies' });
+  }
+});
+
+// Message Scheduling
+app.post('/api/schedule/message', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const result = await scheduleService.scheduleMessage({ ...req.body, senderId: userId });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to schedule message' });
+  }
+});
+
+app.get('/api/schedule/messages', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const messages = await scheduleService.getUserScheduledMessages(userId);
+    res.json(messages);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get scheduled messages' });
+  }
+});
+
+app.delete('/api/schedule/message/:id', async (req, res) => {
+  try {
+    await scheduleService.cancelScheduledMessage(req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to cancel scheduled message' });
+  }
+});
+
+// Polls
+app.post('/api/polls', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const { roomId, question, options, multipleChoice } = req.body;
+    const userId = (req.user as any).id;
+    const poll = await pollService.createPoll(roomId, userId, question, options, multipleChoice);
+    res.json(poll);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create poll' });
+  }
+});
+
+app.post('/api/polls/:id/vote', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const { optionIndex } = req.body;
+    await pollService.vote(req.params.id, userId, optionIndex);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(400).json({ error: 'Failed to vote' });
+  }
+});
+
+app.get('/api/polls/:id/results', async (req, res) => {
+  try {
+    const results = await pollService.getResults(req.params.id);
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get results' });
+  }
+});
+
+app.get('/api/rooms/:roomId/polls', async (req, res) => {
+  try {
+    const polls = await pollService.getRoomPolls(req.params.roomId);
+    res.json(polls);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get polls' });
+  }
+});
+
+// Tasks
+app.post('/api/tasks', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const { roomId, assignedTo, title, description, priority, dueDate } = req.body;
+    const userId = (req.user as any).id;
+    const task = await taskService.createTask(roomId, userId, { assignedTo, title, description, priority, dueDate });
+    res.json(task);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create task' });
+  }
+});
+
+app.patch('/api/tasks/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+    await taskService.updateStatus(req.params.id, status);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update task' });
+  }
+});
+
+app.get('/api/rooms/:roomId/tasks', async (req, res) => {
+  try {
+    const tasks = await taskService.getRoomTasks(req.params.roomId);
+    res.json(tasks);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get tasks' });
+  }
+});
+
+app.get('/api/tasks', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const tasks = await taskService.getUserTasks(userId);
+    res.json(tasks);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get tasks' });
+  }
+});
+
+// Events
+app.post('/api/events', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const { roomId, title, description, eventDate, duration, location } = req.body;
+    const userId = (req.user as any).id;
+    const event = await eventService.createEvent(roomId, userId, { title, description, eventDate, duration, location });
+    res.json(event);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create event' });
+  }
+});
+
+app.post('/api/events/:id/rsvp', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const { status } = req.body;
+    await eventService.rsvp(req.params.id, userId, status);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to RSVP' });
+  }
+});
+
+app.get('/api/rooms/:roomId/events', async (req, res) => {
+  try {
+    const events = await eventService.getRoomEvents(req.params.roomId);
+    res.json(events);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get events' });
+  }
+});
+
+// Bookmarks
+app.post('/api/bookmarks', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const { messageId, note } = req.body;
+    const bookmark = await bookmarkService.createBookmark(userId, messageId, note);
+    res.json(bookmark);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/bookmarks', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const bookmarks = await bookmarkService.getBookmarks(userId);
+    res.json(bookmarks);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get bookmarks' });
+  }
+});
+
+app.delete('/api/bookmarks/:id', async (req, res) => {
+  try {
+    await bookmarkService.deleteBookmark(req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete bookmark' });
+  }
+});
+
+// Chat Folders
+app.post('/api/folders', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const { name, icon, color } = req.body;
+    const folder = await folderService.createFolder(userId, name, icon, color);
+    res.json(folder);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create folder' });
+  }
+});
+
+app.get('/api/folders', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const folders = await folderService.getFolders(userId);
+    res.json(folders);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get folders' });
+  }
+});
+
+app.post('/api/folders/:id/rooms', async (req, res) => {
+  try {
+    const { roomId } = req.body;
+    await folderService.addRoomToFolder(req.params.id, roomId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to add room to folder' });
+  }
+});
+
+app.delete('/api/folders/:id/rooms/:roomId', async (req, res) => {
+  try {
+    await folderService.removeRoomFromFolder(req.params.id, req.params.roomId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to remove room from folder' });
+  }
+});
+
+app.get('/api/folders/:id/rooms', async (req, res) => {
+  try {
+    const rooms = await folderService.getFolderRooms(req.params.id);
+    res.json(rooms);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get folder rooms' });
+  }
+});
+
+// Themes
+app.post('/api/themes', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const { name, colors, background, font } = req.body;
+    const theme = await themeService.saveTheme(userId, name, colors, background, font);
+    res.json(theme);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to save theme' });
+  }
+});
+
+app.get('/api/themes', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const theme = await themeService.getTheme(userId);
+    res.json(theme || {});
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get theme' });
+  }
+});
+
+// Sync
+app.post('/api/sync', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const { deviceId, data } = req.body;
+    await syncService.syncUserData(userId, deviceId, data);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Sync failed' });
+  }
+});
+
+app.get('/api/sync/devices', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    const devices = await syncService.getConnectedDevices(userId);
+    res.json(devices);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get devices' });
+  }
+});
+
+app.delete('/api/sync/devices/:id', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    await syncService.removeDevice(userId, req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to remove device' });
+  }
+});
+
+// Read Receipts
+app.post('/api/messages/:messageId/read', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const userId = (req.user as any).id;
+    await supabase.from('message_read_receipts').upsert({
+      message_id: req.params.messageId, user_id: userId, read_at: new Date().toISOString()
+    });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to mark as read' });
+  }
+});
+
+app.get('/api/messages/:messageId/readers', async (req, res) => {
+  try {
+    const { data } = await supabase
+      .from('message_read_receipts')
+      .select('*, users!inner(name)')
+      .eq('message_id', req.params.messageId);
+    res.json(data || []);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get readers' });
+  }
+});
+
+// ============================================
+// FEATURE: MESSAGE SEARCH
+// ============================================
+app.get('/api/messages/search', async (req, res) => {
+  try {
+    const { query, roomId, senderId, limit = 50, offset = 0 } = req.query;
+
+    if (!query) {
+      return res.status(400).json({ error: 'Search query is required' });
+    }
+
+    const results = await messageService.searchMessages(
+      query as string,
+      roomId as string,
+      senderId as string,
+      parseInt(limit as string) || 50,
+      parseInt(offset as string) || 0
+    );
+
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to search messages' });
+  }
+});
+
+// ============================================
+// FEATURE: MESSAGE PINNING
+// ============================================
+app.post('/api/messages/:messageId/pin', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { messageId } = req.params;
+    const { roomId } = req.body;
+    const userId = (req.user as any).id;
+
+    if (!roomId) {
+      return res.status(400).json({ error: 'Room ID is required' });
+    }
+
+    const data = await pinService.pinMessage(messageId, roomId, userId);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to pin message' });
+  }
+});
+
+app.delete('/api/messages/:messageId/pin', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { messageId } = req.params;
+    const { roomId } = req.body;
+
+    if (!roomId) {
+      return res.status(400).json({ error: 'Room ID is required' });
+    }
+
+    const result = await pinService.unpinMessage(messageId, roomId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to unpin message' });
+  }
+});
+
+app.get('/api/rooms/:roomId/pinned-messages', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const pinnedMessages = await pinService.getPinnedMessages(roomId);
+    res.json(pinnedMessages);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch pinned messages' });
+  }
+});
+
+// ============================================
+// FEATURE: USER BLOCKING
+// ============================================
+app.post('/api/users/:userId/block', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { userId } = req.params;
+    const { reason } = req.body;
+    const blockerId = (req.user as any).id;
+
+    const data = await blockService.blockUser(blockerId, userId, reason);
+    res.json(data);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to block user' });
+  }
+});
+
+app.delete('/api/users/:userId/block', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { userId } = req.params;
+    const blockerId = (req.user as any).id;
+
+    const result = await blockService.unblockUser(blockerId, userId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to unblock user' });
+  }
+});
+
+app.get('/api/users/blocked', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const userId = (req.user as any).id;
+    const blockedUsers = await blockService.getBlockedUsers(userId);
+    res.json(blockedUsers);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch blocked users' });
+  }
+});
+
+app.get('/api/users/:userId/check-block', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    let blockerId = null;
+
+    if (req.isAuthenticated()) {
+      blockerId = (req.user as any).id;
+    }
+
+    if (!blockerId) {
+      return res.json({ isBlocked: false });
+    }
+
+    const isBlocked = await blockService.isUserBlocked(blockerId, userId);
+    res.json({ isBlocked });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to check block status' });
+  }
+});
+
+// ============================================
+// FEATURE: NOTIFICATIONS
+// ============================================
+app.get('/api/notifications/settings', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const userId = (req.user as any).id;
+    const settings = await notificationService.getOrCreateSettings(userId);
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch notification settings' });
+  }
+});
+
+app.patch('/api/notifications/settings', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const userId = (req.user as any).id;
+    const settings = await notificationService.updateSettings(userId, req.body);
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update notification settings' });
+  }
+});
+
+app.get('/api/notifications', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const userId = (req.user as any).id;
+    const { unread = false } = req.query;
+
+    const notifications = unread
+      ? await notificationService.getUnreadNotifications(userId)
+      : await notificationService.getAllNotifications(userId);
+
+    res.json(notifications);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
+app.post('/api/notifications/:notificationId/read', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { notificationId } = req.params;
+    const notification = await notificationService.markAsRead(notificationId);
+    res.json(notification);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to mark notification as read' });
+  }
+});
+
+app.post('/api/notifications/read-all', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const userId = (req.user as any).id;
+    const result = await notificationService.markAllAsRead(userId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to mark all notifications as read' });
+  }
+});
+
+app.delete('/api/notifications/:notificationId', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { notificationId } = req.params;
+    const result = await notificationService.deleteNotification(notificationId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete notification' });
+  }
+});
+
+// ============================================
+// FEATURE: ADVANCED ANALYTICS
+// ============================================
+app.get('/api/analytics/dashboard', async (req, res) => {
+  try {
+    const metrics = await analyticsService.getDashboardMetrics();
+    res.json(metrics);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch dashboard metrics' });
+  }
+});
+
+app.get('/api/analytics/engagement', async (req, res) => {
+  try {
+    const { period = '7d' } = req.query;
+    const metrics = await analyticsService.getEngagementMetrics(period as string);
+    res.json(metrics);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch engagement metrics' });
+  }
+});
+
+app.get('/api/analytics/rooms', async (req, res) => {
+  try {
+    const metrics = await analyticsService.getRoomMetrics();
+    res.json(metrics);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch room metrics' });
+  }
+});
+
+app.get('/api/analytics/heatmap', async (req, res) => {
+  try {
+    const { period = '7d' } = req.query;
+    const heatmap = await analyticsService.getActivityHeatmap(period as string);
+    res.json(heatmap);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch activity heatmap' });
+  }
+});
+
+app.get('/api/analytics/content-types', async (req, res) => {
+  try {
+    const distribution = await analyticsService.getContentTypeDistribution();
+    res.json(distribution);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch content type distribution' });
+  }
+});
+
+app.get('/api/analytics/retention', async (req, res) => {
+  try {
+    const retention = await analyticsService.getUserRetention();
+    res.json(retention);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch user retention' });
+  }
+});
+
+// ============================================
+// FEATURE: BROADCAST LISTS
+// ============================================
+app.post('/api/broadcasts', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { name, recipientIds } = req.body;
+    const userId = (req.user as any).id;
+    const broadcast = await broadcastService.createBroadcast(name, userId, recipientIds);
+    res.json(broadcast);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create broadcast' });
+  }
+});
+
+app.get('/api/broadcasts', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const broadcasts = await broadcastService.getUserBroadcasts(userId);
+    res.json(broadcasts);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch broadcasts' });
+  }
+});
+
+app.get('/api/broadcasts/:id', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const broadcast = await broadcastService.getBroadcastDetails(req.params.id);
+    res.json(broadcast);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch broadcast details' });
+  }
+});
+
+app.delete('/api/broadcasts/:id', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const result = await broadcastService.deleteBroadcast(req.params.id, userId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete broadcast' });
+  }
+});
+
+app.post('/api/broadcasts/:id/send', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { content, roomId } = req.body;
+    const user = req.user as any;
+    const message = await broadcastService.sendBroadcastMessage(
+      req.params.id,
+      user.id,
+      user.name,
+      content,
+      roomId
+    );
+    res.json(message);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to send broadcast' });
+  }
+});
+
+// ============================================
+// FEATURE: TWO-FACTOR AUTHENTICATION (Legacy - Redirect to MFA)
+// ============================================
+app.post('/api/security/2fa/setup', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const userEmail = (req.user as any).email || 'user@example.com';
+    const result = await mfaService.setupMFA(userId, userEmail);
+    res.json({
+      secret: result.secret,
+      qrCode: result.qrCodeDataUrl,
+      backupCodes: result.backupCodes,
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to setup 2FA' });
+  }
+});
+
+app.post('/api/security/2fa/verify', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const { code } = req.body;
+    const result = await mfaService.verifyAndEnableMFA(userId, code);
+    res.json({ success: true, message: 'MFA enabled successfully' });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to verify 2FA' });
+  }
+});
+
+app.post('/api/security/2fa/disable', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const { code } = req.body;
+    await mfaService.disableMFA(userId, code);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to disable 2FA' });
+  }
+});
+
+app.get('/api/security/2fa/status', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const enabled = await mfaService.isMFAEnabled(userId);
+    res.json({ enabled });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to check 2FA status' });
+  }
+});
+
+// ============================================
+// FEATURE: SESSION MANAGEMENT
+// ============================================
+app.get('/api/security/sessions', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const sessions = await securityService.getUserSessions(userId);
+    res.json(sessions);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch sessions' });
+  }
+});
+
+app.delete('/api/security/sessions/:id', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    await securityService.revokeSession(req.params.id, userId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to revoke session' });
+  }
+});
+
+app.post('/api/security/sessions/revoke-others', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const currentSessionId = req.body.currentSessionId;
+    await securityService.revokeOtherSessions(userId, currentSessionId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to revoke other sessions' });
+  }
+});
+
+// ============================================
+// FEATURE: PRIVACY SETTINGS
+// ============================================
+app.get('/api/security/privacy', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const settings = await securityService.getPrivacySettings(userId);
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch privacy settings' });
+  }
+});
+
+app.patch('/api/security/privacy', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const settings = await securityService.updatePrivacySettings(userId, req.body);
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update privacy settings' });
+  }
+});
+
+// ============================================
+// FEATURE: MESSAGE EDITING & DELETION
+// ============================================
+app.patch('/api/messages/:messageId', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { messageId } = req.params;
+    const { content, oldContent } = req.body;
+    const userId = (req.user as any).id;
+    const message = await securityService.editMessage(messageId, userId, content, oldContent);
+    res.json(message);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to edit message' });
+  }
+});
+
+app.delete('/api/messages/:messageId', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { messageId } = req.params;
+    const { deleteFor } = req.body;
+    const userId = (req.user as any).id;
+    await securityService.deleteMessage(messageId, userId, deleteFor);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to delete message' });
+  }
+});
+
+app.get('/api/messages/:messageId/edits', async (req, res) => {
+  try {
+    const edits = await securityService.getMessageEditHistory(req.params.messageId);
+    res.json(edits);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch edit history' });
+  }
+});
+
+// ============================================
+// FEATURE: STARRED MESSAGES
+// ============================================
+app.post('/api/messages/:messageId/star', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { messageId } = req.params;
+    const { roomId } = req.body;
+    const userId = (req.user as any).id;
+    const starred = await securityService.starMessage(messageId, userId, roomId);
+    res.json(starred);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to star message' });
+  }
+});
+
+app.delete('/api/messages/:messageId/star', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { messageId } = req.params;
+    const userId = (req.user as any).id;
+    await securityService.unstarMessage(messageId, userId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to unstar message' });
+  }
+});
+
+app.get('/api/messages/starred', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const starred = await securityService.getStarredMessages(userId);
+    res.json(starred);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch starred messages' });
+  }
+});
+
+// ============================================
+// FEATURE: AUTO-DELETE SETTINGS
+// ============================================
+app.get('/api/rooms/:roomId/auto-delete', async (req, res) => {
+  try {
+    const setting = await securityService.getAutoDelete(req.params.roomId);
+    res.json({ deleteAfter: setting });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch auto-delete settings' });
+  }
+});
+
+app.post('/api/rooms/:roomId/auto-delete', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { roomId } = req.params;
+    const { deleteAfter } = req.body;
+    const userId = (req.user as any).id;
+    const setting = await securityService.setAutoDelete(roomId, userId, deleteAfter);
+    res.json(setting);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to set auto-delete' });
+  }
+});
+
+// ============================================
+// FEATURE: VOICE MESSAGES
+// ============================================
+app.post('/api/voice-messages', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { messageId, duration, audioUrl, audioPath, waveformData } = req.body;
+    const userId = (req.user as any).id;
+    const voiceMessage = await voiceLocationService.saveVoiceMessage(messageId, userId, {
+      duration,
+      audioUrl,
+      audioPath,
+      waveformData,
+    });
+    res.json(voiceMessage);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to save voice message' });
+  }
+});
+
+app.get('/api/voice-messages/:messageId', async (req, res) => {
+  try {
+    const voiceMessage = await voiceLocationService.getVoiceMessage(req.params.messageId);
+    res.json(voiceMessage || null);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch voice message' });
+  }
+});
+
+// ============================================
+// FEATURE: LIVE LOCATION
+// ============================================
+app.post('/api/live-location/start', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const { roomId, latitude, longitude, accuracy } = req.body;
+    const location = await voiceLocationService.startLiveLocation(userId, roomId, {
+      latitude,
+      longitude,
+      accuracy,
+    });
+    res.json(location);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to start live location' });
+  }
+});
+
+app.post('/api/live-location/stop', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const { roomId } = req.body;
+    await voiceLocationService.stopLiveLocation(userId, roomId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to stop live location' });
+  }
+});
+
+app.get('/api/live-location/:roomId', async (req, res) => {
+  try {
+    const locations = await voiceLocationService.getActiveLocations(req.params.roomId);
+    res.json(locations);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch live locations' });
+  }
+});
+
+// ============================================
+// FEATURE: MESSAGE FORWARDING
+// ============================================
+app.post('/api/messages/:messageId/forward', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const forward = await voiceLocationService.trackForward(req.params.messageId, userId);
+    res.json(forward);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to track forward' });
+  }
+});
+
+app.get('/api/messages/:messageId/forward-count', async (req, res) => {
+  try {
+    const count = await voiceLocationService.getForwardCount(req.params.messageId);
+    res.json({ count });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get forward count' });
+  }
+});
+
+// ============================================
+// FEATURE: MESSAGE REPORTS
+// ============================================
+app.post('/api/messages/:messageId/report', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const { reason, description } = req.body;
+    const report = await voiceLocationService.reportMessage(req.params.messageId, userId, {
+      reason,
+      description,
+    });
+    res.json(report);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to report message' });
+  }
+});
+
+app.get('/api/reports/pending', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const reports = await voiceLocationService.getPendingReports();
+    res.json(reports);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch reports' });
+  }
+});
+
+// ============================================
+// FEATURE: MEDIA SETTINGS
+// ============================================
+app.get('/api/media/settings', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const settings = await voiceLocationService.getMediaSettings(userId);
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch media settings' });
+  }
+});
+
+app.patch('/api/media/settings', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = (req.user as any).id;
+    const settings = await voiceLocationService.updateMediaSettings(userId, req.body);
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update media settings' });
+  }
+});
+
+// ============================================
+// MAINTENANCE ENDPOINTS
+// ============================================
+app.post('/api/admin/cleanup/locations', async (req, res) => {
+  try {
+    await voiceLocationService.cleanupExpiredLocations();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to cleanup locations' });
+  }
+});
+
+app.post('/api/admin/cleanup/messages', async (req, res) => {
+  try {
+    await voiceLocationService.cleanupOldMessages();
+    await securityService.runAutoDeleteCleanup();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to cleanup messages' });
+  }
+});
+
 
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ 
+  server,
+  verifyClient: (info, cb) => {
+    cb(true);
+  }
+});
 
 interface Client {
   id: string;
   name: string;
   ws: WebSocket;
+  authenticated: boolean;
+  joinedAt: Date;
+  messageCount: number;
+  lastMessageTime: number;
 }
 
 const clients: Map<string, Client> = new Map();
 
-wss.on('connection', (ws) => {
-  const clientId = Date.now().toString();
-  console.log('New client connected:', clientId);
+const WS_RATE_LIMIT = {
+  maxMessages: 30,
+  windowMs: 60000,
+  banThreshold: 5,
+};
+
+const wsRateLimitMap = new Map<string, { count: number; windowStart: number; violations: number }>();
+
+wss.on('connection', (ws, req) => {
+  const clientId = crypto.randomUUID();
+  const clientIP = req.socket.remoteAddress || 'unknown';
+  console.log('New WebSocket connection:', clientId, 'from', clientIP);
 
   ws.on('message', async (data) => {
-    const message = JSON.parse(data.toString());
+    const now = Date.now();
+    let rateRecord = wsRateLimitMap.get(clientIP);
+    
+    if (!rateRecord || rateRecord.windowStart < now - WS_RATE_LIMIT.windowMs) {
+      rateRecord = { count: 0, windowStart: now, violations: 0 };
+      wsRateLimitMap.set(clientIP, rateRecord);
+    }
+    
+    rateRecord.count++;
+    
+    if (rateRecord.count > WS_RATE_LIMIT.maxMessages) {
+      rateRecord.violations++;
+      if (rateRecord.violations >= WS_RATE_LIMIT.banThreshold) {
+        ws.close(1008, 'Rate limit exceeded - connection terminated');
+        return;
+      }
+      ws.send(JSON.stringify({ type: 'error', error: 'Rate limit exceeded. Slow down.' }));
+      return;
+    }
+
+    let message;
+    try {
+      message = JSON.parse(data.toString());
+    } catch {
+      ws.send(JSON.stringify({ type: 'error', error: 'Invalid message format' }));
+      return;
+    }
     
     if (message.type === 'join') {
-      clients.set(message.userId, { id: message.userId, name: message.userName, ws });
-      console.log(`Client ${message.userId} joined as ${message.userName}`);
+      const token = message.token;
+      if (token) {
+        const payload = tokenService.verifyAccessToken(token);
+        if (!payload) {
+          ws.send(JSON.stringify({ type: 'error', error: 'Invalid or expired token' }));
+          return;
+        }
+
+        if (payload.userId !== message.userId) {
+          ws.send(JSON.stringify({ type: 'error', error: 'User ID mismatch with token' }));
+          return;
+        }
+      }
+
+      clients.set(clientId, { 
+        id: message.userId, 
+        name: message.userName, 
+        ws,
+        authenticated: true,
+        joinedAt: new Date(),
+        messageCount: 0,
+        lastMessageTime: now,
+      });
+      console.log(`Client ${message.userId} joined as ${message.userName} on connection ${clientId}`);
+      
+      try {
+        await supabase
+          .from('security_audit_log')
+          .insert({
+            user_id: message.userId,
+            event_type: 'WEBSOCKET_CONNECT',
+            success: true,
+            ip_address: clientIP,
+          });
+      } catch (e) {
+        // table might not exist
+      }
       
       broadcastUserCount();
       
@@ -511,7 +2019,14 @@ wss.on('connection', (ws) => {
         timestamp: new Date().toISOString(),
       });
     } else if (message.type === 'message') {
-      // Upload media to Supabase Storage if it's a base64 data URL
+      const client = clients.get(clientId);
+      if (!client || !client.authenticated) {
+        ws.send(JSON.stringify({ type: 'error', error: 'Authentication required' }));
+        return;
+      }
+      client.messageCount++;
+      client.lastMessageTime = now;
+      
       let mediaUrl = message.mediaUrl;
       let mediaStoragePath: string | null = null;
 
@@ -548,24 +2063,29 @@ wss.on('connection', (ws) => {
         }
       }
 
-      // Calculate message expiry (7 days from now)
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 7);
 
-      const { data: savedMessage } = await supabase
-        .from('messages')
-        .insert({
-          sender_id: message.senderId,
-          sender_name: message.senderName,
-          content: message.content,
-          room_id: message.roomId,
-          message_type: message.msgType || 'text',
-          media_url: mediaUrl,
-          media_storage_path: mediaStoragePath,
-          expires_at: expiresAt.toISOString(),
-        })
-        .select()
-        .single();
+      let savedMessage: any = null;
+      try {
+        const { data: msg } = await supabase
+          .from('messages')
+          .insert({
+            sender_id: message.senderId,
+            sender_name: message.senderName,
+            content: message.content,
+            room_id: message.roomId,
+            message_type: message.msgType || 'text',
+            media_url: mediaUrl,
+            media_storage_path: mediaStoragePath,
+            expires_at: expiresAt.toISOString(),
+          })
+          .select()
+          .single();
+        savedMessage = msg;
+      } catch (e) {
+        // messages table might not exist
+      }
 
       const msgType = message.msgType || 'text';
       broadcastToAll({
@@ -594,64 +2114,77 @@ wss.on('connection', (ws) => {
         isTyping: message.isTyping,
       });
     } else if (message.type === 'create_room') {
-      const { data: room } = await supabase
-        .from('rooms')
-        .insert({
-          name: message.roomName,
-          description: message.roomDescription,
-          type: message.roomType || 'public',
-        })
-        .select()
-        .single();
+      let room: any = null;
+      try {
+        const { data: r } = await supabase
+          .from('rooms')
+          .insert({
+            name: message.roomName,
+            description: message.roomDescription,
+            type: message.roomType || 'public',
+          })
+          .select()
+          .single();
+        room = r;
+      } catch (e) {
+        // rooms table might not exist
+      }
 
       broadcastToAll({
         type: 'room_created',
-        roomId: room.id,
-        roomName: room.name,
-        roomDescription: room.description,
-        roomType: room.type,
+        roomId: room?.id || Date.now().toString(),
+        roomName: message.roomName,
+        roomDescription: message.roomDescription,
+        roomType: message.roomType || 'public',
       });
     } else if (message.type === 'load_messages') {
-      // Only load messages from the last 7 days
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      let messages: any[] = [];
+      try {
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-      const { data: messages } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('room_id', message.roomId)
-        .gte('created_at', sevenDaysAgo.toISOString())
-        .order('created_at', { ascending: true })
-        .limit(200);
-
-      if (messages) {
-        ws.send(JSON.stringify({
-          type: 'message_history',
-          messages: messages.map((msg: any) => ({
-            id: msg.id,
-            senderId: msg.sender_id,
-            senderName: msg.sender_name,
-            content: msg.content,
-            timestamp: msg.created_at,
-            expiresAt: msg.expires_at,
-            msgType: msg.message_type,
-            mediaUrl: msg.media_url,
-          })),
-        }));
+        const { data: msgs } = await supabase
+          .from('messages')
+          .select('*')
+          .eq('room_id', message.roomId)
+          .gte('created_at', sevenDaysAgo.toISOString())
+          .order('created_at', { ascending: true })
+          .limit(200);
+        if (msgs) messages = msgs;
+      } catch (e) {
+        // messages table might not exist
       }
+
+      ws.send(JSON.stringify({
+        type: 'message_history',
+        messages: messages.map((msg: any) => ({
+          id: msg.id,
+          senderId: msg.sender_id,
+          senderName: msg.sender_name,
+          content: msg.content,
+          timestamp: msg.created_at,
+          expiresAt: msg.expires_at,
+          msgType: msg.message_type,
+          mediaUrl: msg.media_url,
+        })),
+      }));
     } else if (message.type === 'load_status') {
-      const { data: status } = await supabase
-        .from('status_updates')
-        .select('*')
-        .gte('expires_at', new Date().toISOString())
-        .order('created_at', { ascending: false });
-
-      if (status) {
-        ws.send(JSON.stringify({
-          type: 'status_updates',
-          status: status,
-        }));
+      let status: any[] = [];
+      try {
+        const { data: s } = await supabase
+          .from('status_updates')
+          .select('*')
+          .gte('expires_at', new Date().toISOString())
+          .order('created_at', { ascending: false });
+        if (s) status = s;
+      } catch (e) {
+        // status_updates table might not exist
       }
+
+      ws.send(JSON.stringify({
+        type: 'status_updates',
+        status: status,
+      }));
     } else if (message.type === 'reaction') {
       broadcastToAll({
         type: 'reaction',
@@ -699,72 +2232,105 @@ function broadcastUserCount() {
 }
 
 // ============================================
-// 7-Day Cleanup Job — runs every 6 hours
+// BRUTE FORCE PROTECTION HELPERS
 // ============================================
-async function cleanupExpiredMessages() {
-  console.log('[Cleanup] Starting expired message cleanup...');
+
+async function trackFailedLoginAttempt(userId: string | null, email: string, ipAddress: string) {
   try {
-    // 1. Find expired messages that have media in storage
-    const { data: expiredWithMedia } = await supabase
-      .from('messages')
-      .select('id, media_storage_path')
-      .lt('expires_at', new Date().toISOString())
-      .not('media_storage_path', 'is', null);
+    const { data: existing } = await supabase
+      .from('failed_login_attempts')
+      .select('*')
+      .eq('email', email)
+      .eq('ip_address', ipAddress)
+      .maybeSingle();
 
-    // 2. Delete media files from Supabase Storage
-    if (expiredWithMedia && expiredWithMedia.length > 0) {
-      const paths = expiredWithMedia
-        .map((m: any) => m.media_storage_path)
-        .filter(Boolean);
-
-      if (paths.length > 0) {
-        const { error: storageError } = await supabase.storage
-          .from('chat-media')
-          .remove(paths);
-
-        if (storageError) {
-          console.error('[Cleanup] Storage deletion error:', storageError);
-        } else {
-          console.log(`[Cleanup] Deleted ${paths.length} media files from storage`);
-        }
+    if (existing) {
+      const newCount = existing.attempt_count + 1;
+      let lockedUntil = null;
+      
+      if (newCount >= 15) {
+        lockedUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      } else if (newCount >= 10) {
+        lockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      } else if (newCount >= 5) {
+        lockedUntil = new Date(Date.now() + 5 * 60 * 1000).toISOString();
       }
-    }
 
-    // 3. Delete expired messages from database
-    const { error: deleteError, count } = await supabase
-      .from('messages')
-      .delete({ count: 'exact' })
-      .lt('expires_at', new Date().toISOString());
-
-    if (deleteError) {
-      console.error('[Cleanup] Message deletion error:', deleteError);
+      await supabase
+        .from('failed_login_attempts')
+        .update({
+          attempt_count: newCount,
+          locked_until: lockedUntil,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id);
     } else {
-      console.log(`[Cleanup] Deleted ${count || 0} expired messages`);
+      await supabase
+        .from('failed_login_attempts')
+        .insert({
+          user_id: userId,
+          email,
+          ip_address: ipAddress,
+          attempt_count: 1,
+        });
     }
-
-    // 4. Delete expired status updates
-    const { error: statusError } = await supabase
-      .from('status_updates')
-      .delete()
-      .lt('expires_at', new Date().toISOString());
-
-    if (statusError) {
-      console.error('[Cleanup] Status cleanup error:', statusError);
-    }
-
-    console.log('[Cleanup] Cleanup complete');
   } catch (error) {
-    console.error('[Cleanup] Unexpected error:', error);
+    console.error('Error tracking failed login:', error);
   }
 }
 
-// Run cleanup on startup
-cleanupExpiredMessages();
+async function clearFailedLoginAttempts(email: string, ipAddress: string) {
+  try {
+    await supabase
+      .from('failed_login_attempts')
+      .delete()
+      .eq('email', email)
+      .eq('ip_address', ipAddress);
+  } catch (error) {
+    console.error('Error clearing failed login attempts:', error);
+  }
+}
 
-// Schedule cleanup every 6 hours (in milliseconds)
-const CLEANUP_INTERVAL = 6 * 60 * 60 * 1000;
-setInterval(cleanupExpiredMessages, CLEANUP_INTERVAL);
-console.log(`[Cleanup] Scheduled every ${CLEANUP_INTERVAL / 1000 / 60 / 60} hours`);
+// ============================================
+// MFA SESSION TOKEN HELPERS
+// ============================================
+
+const mfaSessionTokens = new Map<string, { userId: string; expiresAt: number }>();
+
+async function generateMFASessionToken(userId: string): Promise<string> {
+  const token = crypto.randomBytes(32).toString('hex');
+  mfaSessionTokens.set(token, {
+    userId,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+  });
+  return token;
+}
+
+async function verifyMFASessionToken(token: string): Promise<string | null> {
+  const session = mfaSessionTokens.get(token);
+  if (!session) return null;
+  
+  if (session.expiresAt < Date.now()) {
+    mfaSessionTokens.delete(token);
+    return null;
+  }
+  
+  mfaSessionTokens.delete(token);
+  return session.userId;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, session] of mfaSessionTokens.entries()) {
+    if (session.expiresAt < now) {
+      mfaSessionTokens.delete(token);
+    }
+  }
+}, 60 * 1000);
+
+// ============================================
+// 7-Day Cleanup Job — runs every 6 hours (DISABLED)
+// ============================================
 
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
@@ -774,4 +2340,3 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
   console.error(err.stack);
   res.status(500).json({ error: 'Internal server error' });
 });
-

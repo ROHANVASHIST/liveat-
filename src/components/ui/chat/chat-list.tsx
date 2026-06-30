@@ -1,24 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from '../avatar';
-import { Badge } from '../badge';
-import { Button } from '../button';
-import { Input } from '../input';
 import { cn } from '@/lib/utils';
 import { 
-  Search, 
-  Plus, 
-  Settings, 
-  Users, 
   MessageSquare,
   BarChart3,
-  LogOut,
-  Bell,
-  MoreVertical,
+  Settings,
+  Plus,
+  Terminal,
+  Activity,
   ChevronRight,
-  Circle
+  Hash,
+  Users,
+  Search,
+  Circle,
+  Clock
 } from 'lucide-react';
-import { ScrollArea } from '../scroll-area';
-import { AppIcon } from '../app-icon';
 
 interface ChatUser {
   id: string;
@@ -33,162 +29,332 @@ interface ChatRoom {
   id: string;
   name: string;
   description: string;
-  onlineUsers: number;
-  lastMessage?: string;
-  type: 'public' | 'private' | 'direct';
 }
 
 interface ChatListProps {
   rooms: ChatRoom[];
   users: ChatUser[];
   currentRoomId?: string;
+  activeChatUserId?: string;
   currentUserId?: string;
   onSelectRoom: (roomId: string) => void;
   onSelectUser: (userId: string) => void;
   onSelectNav?: (nav: string) => void;
-  onAddContact: () => void;
+  onAddContact?: () => void;
   onOpenProfile: () => void;
-  onSearch: (query: string) => void;
+  onCreateRoom?: () => void;
+  typingUsers?: string[];
 }
+
+const getRelativeTime = (date: Date): string => {
+  const now = new Date();
+  const diffMs = now.getTime() - new Date(date).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'now';
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return `${Math.floor(days / 7)}w`;
+};
 
 export const ChatList: React.FC<ChatListProps> = ({
   rooms,
   users,
   currentRoomId,
+  activeChatUserId,
   currentUserId,
   onSelectRoom,
   onSelectUser,
   onSelectNav,
-  onAddContact,
   onOpenProfile,
-  onSearch,
+  onCreateRoom,
+  typingUsers = [],
 }) => {
   const [activeNav, setActiveNav] = useState('messages');
+  const [sidebarSection, setSidebarSection] = useState<'rooms' | 'contacts'>('rooms');
   const [searchQuery, setSearchQuery] = useState('');
-  
   const currentUserData = users.find(u => u.id === currentUserId);
+  const onlineCount = users.filter(u => u.status === 'online').length;
+
+  const roomUnread = useMemo(() => {
+    const map: Record<string, number> = {};
+    rooms.forEach(room => {
+      map[room.id] = Math.floor(Math.random() * 5);
+    });
+    return map;
+  }, [rooms]);
 
   const mainNav = [
-    { id: 'messages', label: 'Messages', icon: MessageSquare },
-    { id: 'contacts', label: 'Contacts', icon: Users },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'messages', label: 'Chat', icon: MessageSquare },
+    { id: 'analytics', label: 'Monitor', icon: BarChart3 },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
+  const filteredRooms = rooms.filter(r => r.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredUsers = users.filter(u => 
+    u.id !== currentUserId && 
+    u.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const onlineUsers = filteredUsers.filter(u => u.status === 'online');
+  const offlineUsers = filteredUsers.filter(u => u.status !== 'online');
+
   return (
-    <div className="flex h-full flex-col bg-white border-r border-slate-100 relative overflow-hidden text-slate-600">
-      {/* Branding Section */}
-      <div className="p-8 flex items-center gap-4 mb-2">
-        <div className="h-11 w-11 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-blue-500/20 rotate-3 hover:rotate-0 transition-transform duration-500">
-           <AppIcon size={22} className="text-white" />
-        </div>
-        <div>
-           <h2 className="text-sm font-black text-slate-900 leading-[1.1] uppercase tracking-tighter">Digital<br /><span className="text-blue-600">Concierge.</span></h2>
+    <div className="flex h-full flex-col bg-card border-r border-border relative overflow-hidden font-mono">
+      {/* App Branding */}
+      <div className="p-5 border-b border-border bg-muted/10 group cursor-pointer" onClick={() => onSelectNav?.('messages')}>
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 border border-primary flex items-center justify-center text-primary group-hover:bg-primary/10 transition-colors">
+             <Terminal size={20} />
+          </div>
+          <div>
+             <h2 className="text-xs font-bold uppercase tracking-[0.2em] leading-none">LiveAt</h2>
+             <p className="text-[9px] text-muted-foreground uppercase tracking-widest mt-1.5 flex items-center gap-2">
+               <span className="h-1.5 w-1.5 rounded-full status-online connection-pulse" /> 
+               <span>{onlineCount} online</span>
+             </p>
+          </div>
         </div>
       </div>
 
-      {/* Main Navigation */}
-      <nav className="flex-1 px-4 space-y-1">
-        <div className="mb-4 px-4">
-           <h3 className="text-[10px] font-black uppercase text-slate-300 tracking-[0.2em] mb-4">Workspace</h3>
+      {/* Search */}
+      <div className="px-4 pt-4 pb-2">
+        <div className="relative group">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground group-focus-within:text-primary transition-colors" />
+          <input 
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search..."
+            className="w-full bg-muted/20 border border-border focus:border-primary/50 h-8 pl-8 pr-3 text-[10px] uppercase tracking-widest outline-none transition-all text-foreground placeholder:text-muted-foreground/40"
+          />
         </div>
+      </div>
+
+      {/* Primary Navigation */}
+      <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-1 scrollbar-hide">
+        <div className="text-[9px] uppercase tracking-[0.3em] text-muted-foreground px-2 mb-3 opacity-50">Navigation</div>
         {mainNav.map((item) => (
-          <Button
+          <button
             key={item.id}
-            variant="ghost"
             onClick={() => {
                setActiveNav(item.id);
                onSelectNav?.(item.id);
                if (item.id === 'settings') onOpenProfile();
             }}
             className={cn(
-              "w-full flex items-center gap-3 px-4 py-4 h-auto rounded-2xl text-sm font-bold transition-all relative group overflow-hidden",
+              "w-full flex items-center gap-3 px-3 py-2 text-[10px] uppercase tracking-widest transition-all border",
               activeNav === item.id 
-                ? "bg-blue-50/50 text-blue-600 shadow-sm border border-blue-100/50" 
-                : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+                ? "bg-primary text-primary-foreground border-primary" 
+                : "text-muted-foreground border-transparent hover:border-border hover:bg-muted/30"
             )}
           >
-            <item.icon className={cn("h-5 w-5 transition-transform group-hover:scale-110", activeNav === item.id ? "text-blue-600" : "text-slate-300")} />
-            {item.label}
-            {activeNav === item.id && (
-              <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1.5 h-6 bg-blue-600 rounded-l-full animate-in slide-in-from-right duration-500" />
-            )}
-          </Button>
+            <item.icon size={14} className={cn(activeNav === item.id ? "text-primary-foreground" : "text-muted-foreground")} />
+            <span className="flex-1 text-left">{item.label}</span>
+            {activeNav === item.id && <ChevronRight size={10} />}
+          </button>
         ))}
         
-        {/* Messages Preview Section */}
-        <div className="pt-10 mb-4 px-4 overflow-y-auto scrollbar-hide">
-           <h3 className="text-[10px] font-black uppercase text-slate-300 tracking-[0.2em] mb-6">
-             {activeNav === 'messages' ? 'Active Rooms' : 'Agent Directory'}
-           </h3>
-           <div className="space-y-5">
-              {activeNav === 'messages' ? (
-                rooms.map(room => (
-                  <div 
-                    key={room.id} 
-                    className={cn(
-                      "flex items-center gap-3 group cursor-pointer hover:translate-x-1 transition-all rounded-2xl p-2",
-                      currentRoomId === room.id ? "bg-blue-50/50" : "hover:bg-slate-50"
-                    )}
-                    onClick={() => onSelectRoom(room.id)}
-                  >
-                     <div className="h-9 w-9 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 group-hover:bg-blue-600 group-hover:text-white transition-all">
-                        <Badge className="bg-transparent text-inherit p-0 font-bold border-none">#</Badge>
-                     </div>
-                     <div className="flex-1 min-w-0">
-                        <p className={cn("text-[11px] font-black uppercase tracking-tight truncate", currentRoomId === room.id ? "text-blue-600" : "text-slate-700")}>{room.name}</p>
-                        <p className="text-[10px] text-slate-400 truncate opacity-70 mt-0.5">{room.description}</p>
-                     </div>
-                  </div>
-                ))
-              ) : (
-                users.map(user => (
-                  <div 
-                    key={user.id} 
-                    className={cn(
-                      "flex items-center gap-3 group cursor-pointer hover:translate-x-1 transition-all rounded-2xl p-2",
-                      activeChatUserId === user.id ? "bg-blue-50/50" : "hover:bg-slate-50"
-                    )}
-                    onClick={() => onSelectUser(user.id)}
-                  >
-                     <div className="relative">
-                        <Avatar className="h-9 w-9 ring-2 ring-white shadow-sm transition-all group-hover:shadow-md">
-                           <AvatarImage src={user.avatar} />
-                           <AvatarFallback className="bg-slate-100 text-[10px] text-slate-400 font-bold">{user.name[0]}</AvatarFallback>
-                        </Avatar>
-                        {user.status === 'online' && <span className="absolute bottom-0 right-0 h-2.5 w-2.5 bg-green-500 rounded-full border-2 border-white animate-pulse" />}
-                     </div>
-                     <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                           <p className={cn("text-[11px] font-black uppercase tracking-tight truncate", activeChatUserId === user.id ? "text-blue-600" : "text-slate-700")}>{user.name}</p>
-                           {user.status === 'online' && <span className="text-[8px] font-bold text-green-500 uppercase tracking-widest">Active</span>}
-                        </div>
-                        <p className="text-[10px] text-slate-400 truncate opacity-70 mt-0.5">{user.email || 'Lead Concierge'}</p>
-                     </div>
-                  </div>
-                ))
+        {/* Section Toggle: Rooms / Contacts */}
+        <div className="pt-6">
+          <div className="flex items-center gap-1 mb-3 border border-border bg-muted/10">
+            <button 
+              onClick={() => setSidebarSection('rooms')}
+              className={cn(
+                "flex-1 py-1.5 text-[9px] uppercase tracking-widest font-bold transition-all flex items-center justify-center gap-1.5",
+                sidebarSection === 'rooms' ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
               )}
-           </div>
+            >
+              <Hash size={10} /> Rooms
+            </button>
+            <button 
+              onClick={() => setSidebarSection('contacts')}
+              className={cn(
+                "flex-1 py-1.5 text-[9px] uppercase tracking-widest font-bold transition-all flex items-center justify-center gap-1.5",
+                sidebarSection === 'contacts' ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Users size={10} /> Contacts
+            </button>
+            {sidebarSection === 'rooms' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onCreateRoom?.(); }}
+                className="px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-colors border-l border-border"
+              >
+                <Plus size={12} />
+              </button>
+            )}
+          </div>
+            
+          <div className="space-y-0.5">
+            {sidebarSection === 'rooms' ? (
+              filteredRooms.length === 0 ? (
+                <div className="py-6 text-center">
+                  <p className="text-[9px] text-muted-foreground uppercase tracking-widest opacity-50">
+                    {searchQuery ? 'No rooms found' : 'No rooms yet'}
+                  </p>
+                </div>
+              ) : (
+                filteredRooms.map(room => {
+                  const unread = roomUnread[room.id];
+                  return (
+                    <button 
+                      key={room.id} 
+                      className={cn(
+                        "w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest transition-all border",
+                        currentRoomId === room.id && !activeChatUserId
+                          ? "bg-muted/50 border-primary/30 text-foreground" 
+                          : "text-muted-foreground border-transparent hover:bg-muted/20"
+                      )}
+                      onClick={() => onSelectRoom(room.id)}
+                    >
+                       <Hash size={12} className={cn(currentRoomId === room.id && !activeChatUserId ? "text-primary" : "text-muted-foreground opacity-50")} />
+                       <span className="flex-1 text-left truncate">{room.name}</span>
+                       {unread > 0 && (
+                         <span className="flex items-center gap-1">
+                           <Circle size={8} className="fill-primary text-primary" />
+                           <span className="text-[8px] text-primary font-bold">{unread}</span>
+                         </span>
+                       )}
+                       {currentRoomId === room.id && !activeChatUserId && <div className="h-1.5 w-1.5 bg-primary rounded-full shadow-[0_0_5px_hsl(var(--primary))]" />}
+                    </button>
+                  );
+                })
+              )
+            ) : (
+              filteredUsers.length === 0 ? (
+                <div className="py-6 text-center">
+                  <p className="text-[9px] text-muted-foreground uppercase tracking-widest opacity-50">
+                    {searchQuery ? 'No contacts found' : 'No contacts yet'}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {onlineUsers.map(user => (
+                    <button 
+                      key={user.id} 
+                      className={cn(
+                        "w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest transition-all border",
+                        activeChatUserId === user.id 
+                          ? "bg-muted/50 border-primary/30 text-foreground" 
+                          : "text-muted-foreground border-transparent hover:bg-muted/20"
+                      )}
+                      onClick={() => onSelectUser(user.id)}
+                    >
+                       <div className="relative shrink-0">
+                          <Avatar className={cn(
+                            "h-7 w-7 border rounded-none overflow-hidden",
+                            activeChatUserId === user.id ? "border-primary" : "border-border"
+                          )}>
+                             <AvatarImage src={user.avatar} className="object-cover" />
+                             <AvatarFallback className="text-[8px] bg-muted rounded-none">{user.name ? user.name[0] : 'U'}</AvatarFallback>
+                          </Avatar>
+                          <span className={cn(
+                            "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card",
+                            user.status === 'online' ? "status-online" : user.status === 'away' ? "status-away" : "status-offline"
+                          )} />
+                       </div>
+                       <div className="flex-1 min-w-0 text-left">
+                         <span className="block truncate">{user.name}</span>
+                         {typingUsers.includes(user.id) ? (
+                           <span className="flex items-center gap-1 mt-0.5">
+                             <span className="text-[8px] text-primary italic normal-case tracking-normal">typing</span>
+                             <span className="typing-dot" />
+                             <span className="typing-dot" />
+                             <span className="typing-dot" />
+                           </span>
+                         ) : user.lastMessage ? (
+                           <span className="block text-[8px] text-muted-foreground truncate mt-0.5 normal-case tracking-normal">{user.lastMessage}</span>
+                         ) : null}
+                       </div>
+                       {!typingUsers.includes(user.id) && user.lastMessageTime ? (
+                         <span className="flex items-center gap-1 shrink-0">
+                           <Clock size={8} className="text-muted-foreground/50" />
+                           <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">{getRelativeTime(user.lastMessageTime)}</span>
+                         </span>
+                       ) : user.status === 'online' && !typingUsers.includes(user.id) ? (
+                         <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">Online</span>
+                       ) : null}
+                    </button>
+                  ))}
+                  {onlineUsers.length > 0 && offlineUsers.length > 0 && (
+                    <div className="flex items-center gap-2 px-3 py-1">
+                      <div className="flex-1 h-px bg-border/50" />
+                      <span className="text-[7px] uppercase tracking-widest text-muted-foreground/40 shrink-0">Offline</span>
+                      <div className="flex-1 h-px bg-border/50" />
+                    </div>
+                  )}
+                  {offlineUsers.map(user => (
+                    <button 
+                      key={user.id} 
+                      className={cn(
+                        "w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest transition-all border",
+                        activeChatUserId === user.id 
+                          ? "bg-muted/50 border-primary/30 text-foreground" 
+                          : "text-muted-foreground border-transparent hover:bg-muted/20"
+                      )}
+                      onClick={() => onSelectUser(user.id)}
+                    >
+                       <div className="relative shrink-0">
+                          <Avatar className={cn(
+                            "h-7 w-7 border rounded-none overflow-hidden",
+                            activeChatUserId === user.id ? "border-primary" : "border-border"
+                          )}>
+                             <AvatarImage src={user.avatar} className="object-cover" />
+                             <AvatarFallback className="text-[8px] bg-muted rounded-none">{user.name ? user.name[0] : 'U'}</AvatarFallback>
+                          </Avatar>
+                          <span className={cn(
+                            "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card",
+                            user.status === 'online' ? "status-online" : user.status === 'away' ? "status-away" : "status-offline"
+                          )} />
+                       </div>
+                       <div className="flex-1 min-w-0 text-left">
+                         <span className="block truncate">{user.name}</span>
+                         {typingUsers.includes(user.id) ? (
+                           <span className="flex items-center gap-1 mt-0.5">
+                             <span className="text-[8px] text-primary italic normal-case tracking-normal">typing</span>
+                             <span className="typing-dot" />
+                             <span className="typing-dot" />
+                             <span className="typing-dot" />
+                           </span>
+                         ) : user.lastMessage ? (
+                           <span className="block text-[8px] text-muted-foreground truncate mt-0.5 normal-case tracking-normal">{user.lastMessage}</span>
+                         ) : null}
+                       </div>
+                       {!typingUsers.includes(user.id) && user.lastMessageTime ? (
+                         <span className="flex items-center gap-1 shrink-0">
+                           <Clock size={8} className="text-muted-foreground/50" />
+                           <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">{getRelativeTime(user.lastMessageTime)}</span>
+                         </span>
+                       ) : user.status === 'online' && !typingUsers.includes(user.id) ? (
+                         <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">Online</span>
+                       ) : null}
+                    </button>
+                  ))}
+                </>
+              )
+            )}
+          </div>
         </div>
       </nav>
 
-      {/* User Section */}
-      <div className="p-6 mt-auto border-t border-slate-50 bg-slate-50/30">
+      {/* Current User Status */}
+      <div className="p-3 bg-muted/20 border-t border-border mt-auto">
          <div 
-           className="flex items-center gap-3 p-3 rounded-2xl hover:bg-white hover:shadow-xl hover:shadow-slate-200/50 transition-all cursor-pointer group border border-transparent hover:border-slate-100"
+           className="flex items-center gap-3 p-2.5 border border-border bg-background hover:border-primary/50 transition-all cursor-pointer group"
            onClick={onOpenProfile}
          >
-           <div className="relative">
-             <Avatar className="h-10 w-10 ring-2 ring-white shadow-md transition-all group-hover:scale-105">
-                <AvatarImage src={currentUserData?.avatar} />
-                <AvatarFallback className="bg-blue-50 text-blue-600 font-bold">{currentUserData?.name[0] || 'U'}</AvatarFallback>
-             </Avatar>
-             <span className="absolute bottom-0 right-0 h-3.5 w-3.5 bg-green-500 rounded-full border-[3px] border-white" />
-           </div>
+           <Avatar className="relative h-8 w-8 border border-border rounded-none overflow-hidden shrink-0">
+              <AvatarImage src={currentUserData?.avatar} />
+              <AvatarFallback className="bg-primary text-primary-foreground font-bold rounded-none">{currentUserData?.name ? currentUserData.name[0] : 'U'}</AvatarFallback>
+           </Avatar>
            <div className="flex-1 min-w-0">
-             <p className="text-[11px] font-black text-slate-900 truncate uppercase tracking-widest">{currentUserData?.name || 'Admin Node'}</p>
-             <p className="text-[9px] font-bold text-blue-500 uppercase tracking-[0.15em] opacity-80 mt-0.5">Authorized Lead</p>
+             <p className="text-[10px] font-bold text-foreground truncate uppercase tracking-widest">{currentUserData?.name || 'You'}</p>
+             <p className="text-[8px] text-primary uppercase tracking-[0.2em] mt-0.5">Connected</p>
            </div>
+           <Activity size={12} className="text-muted-foreground group-hover:text-primary animate-tech-pulse shrink-0" />
          </div>
       </div>
     </div>

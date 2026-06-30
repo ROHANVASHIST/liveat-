@@ -10,19 +10,11 @@ export default defineConfig({
     },
   },
   server: {
-    host: true,
-    port: 5173,
+    port: 5174,
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: 'http://localhost:3001',
         changeOrigin: true,
-      },
-    },
-  },
-  build: {
-    rollupOptions: {
-      input: {
-        main: path.resolve(__dirname, 'index.html'),
       },
     },
   },
