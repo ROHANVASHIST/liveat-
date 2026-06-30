@@ -5,11 +5,11 @@ import { ChatContainer } from './chat-container';
 import { ChatInput } from './chat-input';
 import { Message } from './message';
 import { cn } from '@/lib/utils';
-import { 
-  Info, 
-  Users, 
-  Tag, 
-  MoreHorizontal, 
+import {
+  Info,
+  Users,
+  Tag,
+  MoreHorizontal,
   ChevronRight,
   Shield,
   Clock,
@@ -17,7 +17,16 @@ import {
   Search,
   Star as StarIcon,
   MessageSquare,
-  Sparkles
+  Sparkles,
+  X,
+  Bell,
+  BellOff,
+  Lock,
+  Globe,
+  Trash2,
+  Image,
+  FileText,
+  Pin,
 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '../avatar';
 import { Badge } from '../badge';
@@ -37,9 +46,9 @@ interface Message {
 }
 
 interface ChatPartner {
-   id: string;
-   name: string;
-   avatar?: string;
+  id: string;
+  name: string;
+  avatar?: string;
 }
 
 interface ChatRoomProps {
@@ -71,6 +80,9 @@ interface ChatRoomProps {
   isPolishing?: boolean;
   onSummarize?: () => void;
   isSummarizing?: boolean;
+  replyTo?: { id: string; senderName: string; content: string } | null;
+  onCancelReply?: () => void;
+  onEmojiSelect?: (emoji: string) => void;
 }
 
 export const ChatRoom: React.FC<ChatRoomProps> = ({
@@ -97,11 +109,18 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
   onPolish,
   isPolishing,
   onSummarize,
-  isSummarizing
+  isSummarizing,
+  replyTo,
+  onCancelReply,
+  onEmojiSelect,
 }) => {
   const [isMuted, setIsMuted] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
+  const [showSearch, setShowSearch] = React.useState(false);
+  const [activeFilter, setActiveFilter] = React.useState<'all' | 'media' | 'files' | 'pinned'>('all');
+  const [showInfoPanel, setShowInfoPanel] = React.useState(false);
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -117,12 +136,73 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  const filteredMessages = messages.filter(m => 
-    m.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    m.senderName.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === 'f') {
+        e.preventDefault();
+        setShowSearch(prev => !prev);
+      }
+      if (e.key === 'Escape') {
+        setShowSearch(false);
+        setShowInfoPanel(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
-  const pinnedMessages = messages.filter(m => m.isPinned);
+  React.useEffect(() => {
+    if (showSearch && searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  }, [showSearch]);
+
+  const filteredMessages = React.useMemo(() => {
+    let result = messages;
+    if (searchQuery) {
+      result = result.filter(m =>
+        m.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        m.senderName.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+    if (activeFilter === 'media') {
+      result = result.filter(m => m.type === 'image');
+    } else if (activeFilter === 'files') {
+      result = result.filter(m => m.type === 'file');
+    } else if (activeFilter === 'pinned') {
+      result = result.filter(m => m.isPinned);
+    }
+    return result;
+  }, [messages, searchQuery, activeFilter]);
+
+  const mediaCount = React.useMemo(() => messages.filter(m => m.type === 'image').length, [messages]);
+  const fileCount = React.useMemo(() => messages.filter(m => m.type === 'file').length, [messages]);
+  const pinnedCount = React.useMemo(() => messages.filter(m => m.isPinned).length, [messages]);
+
+  const formatDateLabel = (dateStr: string) => {
+    const today = new Date().toLocaleDateString();
+    const yesterday = new Date(Date.now() - 86400000).toLocaleDateString();
+    if (dateStr === today) return 'Today';
+    if (dateStr === yesterday) return 'Yesterday';
+    return dateStr;
+  };
+
+  const groupByDate = (msgs: Message[]) => {
+    const groups: { date: string; messages: Message[] }[] = [];
+    msgs.forEach(msg => {
+      const dateStr = msg.timestamp.toLocaleDateString();
+      const last = groups[groups.length - 1];
+      if (last && last.date === dateStr) {
+        last.messages.push(msg);
+      } else {
+        groups.push({ date: dateStr, messages: [msg] });
+      }
+    });
+    return groups;
+  };
+
+  const groupedMessages = groupByDate(filteredMessages);
+  const pinnedMessages = messages.filter(m => m.isPinned).slice(0, 5);
 
   React.useEffect(() => {
     scrollToBottom();
@@ -141,64 +221,213 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
         onSummarize={onSummarize}
         isSummarizing={isSummarizing}
       />
-      
+
+      {/* Pinned Messages Bar */}
+      {pinnedMessages.length > 0 && (
+        <div className="border-b border-border bg-muted/10 backdrop-blur-sm">
+          <div className="flex items-center gap-2 px-6 py-2 overflow-x-auto scrollbar-thin">
+            <Pin size={12} className="text-primary shrink-0" />
+            <span className="text-[9px] uppercase tracking-[0.25em] text-primary font-bold mr-1 shrink-0">Pinned</span>
+            <div className="h-4 w-[1px] bg-border shrink-0" />
+            {pinnedMessages.map(msg => (
+              <div
+                key={msg.id}
+                className="flex items-center gap-2 shrink-0 px-3 py-1.5 bg-primary/5 border border-primary/20 rounded cursor-pointer hover:bg-primary/10 transition-colors group"
+              >
+                <StarIcon size={10} className="text-primary/70" />
+                <span className="text-[10px] text-foreground/80 truncate max-w-[180px] font-medium">
+                  {msg.content}
+                </span>
+                <span className="text-[8px] text-muted-foreground uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">
+                  Jump
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Search Bar - Toggleable with Ctrl+F */}
+      {showSearch && (
+        <div className="px-6 py-3 border-b border-border bg-muted/20 backdrop-blur-md flex items-center gap-3">
+          <div className="relative flex-1 group">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground group-focus-within:text-primary transition-colors" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={`SEARCH_NODE: ${roomName}...`}
+              className="w-full bg-background/50 border border-border focus:border-primary h-9 pl-10 pr-4 text-[10px] uppercase tracking-widest transition-all outline-none text-foreground placeholder:text-muted-foreground/50"
+            />
+          </div>
+          <span className="text-[9px] text-muted-foreground uppercase tracking-wider font-mono whitespace-nowrap">
+            {filteredMessages.length} / {messages.length}
+          </span>
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-primary"
+            >
+              Clear
+            </button>
+          )}
+          <button
+            onClick={() => { setShowSearch(false); setSearchQuery(''); }}
+            className="text-muted-foreground hover:text-primary transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* Filter Tabs */}
+      <div className="flex items-center justify-between px-6 py-2 border-b border-border bg-muted/10 backdrop-blur-sm">
+        <div className="flex items-center gap-1">
+          {([
+            { key: 'all' as const, label: 'All', count: messages.length },
+            { key: 'media' as const, label: 'Media', count: mediaCount },
+            { key: 'files' as const, label: 'Files', count: fileCount },
+            { key: 'pinned' as const, label: 'Pinned', count: pinnedCount },
+          ]).map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveFilter(tab.key)}
+              className={cn(
+                'relative px-3 py-1.5 text-[9px] uppercase tracking-[0.25em] font-bold transition-all',
+                activeFilter === tab.key
+                  ? 'text-primary'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              {tab.label}
+              <span className="ml-1.5 text-[8px] opacity-60">[{tab.count}]</span>
+              {activeFilter === tab.key && (
+                <span className="absolute bottom-0 left-2 right-2 h-[2px] bg-primary shadow-[0_0_6px_rgba(0,229,255,0.5)]" />
+              )}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          {!showSearch && (
+            <button
+              onClick={() => setShowSearch(true)}
+              className="text-muted-foreground hover:text-primary transition-colors p-1"
+              title="Search (Ctrl+F)"
+            >
+              <Search size={14} />
+            </button>
+          )}
+          <button
+            onClick={() => setShowInfoPanel(prev => !prev)}
+            className={cn(
+              'text-muted-foreground hover:text-primary transition-colors p-1',
+              showInfoPanel && 'text-primary'
+            )}
+            title="Room Info"
+          >
+            <Info size={14} />
+          </button>
+        </div>
+      </div>
+
       <div className="flex-1 relative flex overflow-hidden">
         {/* Main Conversation */}
         <div className="flex-1 flex flex-col min-w-0 bg-background/50 relative">
-          {/* Scan Line Effect for Chat Area */}
           <div className="scan-line opacity-20" />
-          
-          {/* Internal Search Bar - Technical Style */}
-          <div className="px-6 py-3 border-b border-border bg-muted/20 backdrop-blur-md flex items-center gap-3">
-             <div className="relative flex-1 group">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground group-focus-within:text-primary transition-colors" />
-                <input 
-                  type="text" 
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={`QUERY_NODE: ${roomName}...`}
-                  className="w-full bg-background/50 border border-border focus:border-primary h-9 pl-10 pr-4 text-[10px] uppercase tracking-widest transition-all outline-none text-foreground placeholder:text-muted-foreground/50"
-                />
-             </div>
-             {searchQuery && (
-                <button onClick={() => setSearchQuery('')} className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-primary">Abort</button>
-             )}
-          </div>
+
+          {/* Reply-to Indicator */}
+          {replyTo && (
+            <div className="px-6 py-2 border-b border-primary/20 bg-primary/5 flex items-center gap-3">
+              <div className="h-8 w-[2px] bg-primary/40 rounded-full" />
+              <div className="flex-1 min-w-0">
+                <span className="text-[9px] uppercase tracking-wider text-primary font-bold">
+                  Replying to @{replyTo.senderName}
+                </span>
+                <p className="text-[10px] text-muted-foreground truncate mt-0.5">
+                  {replyTo.content}
+                </p>
+              </div>
+              <button
+                onClick={onCancelReply}
+                className="text-muted-foreground hover:text-primary transition-colors shrink-0"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
 
           <ChatContainer className="flex-1 px-8 py-4">
             <div className="flex flex-col gap-6">
-               {(filteredMessages.length === 0 && searchQuery) ? (
+              {filteredMessages.length === 0 ? (
+                searchQuery ? (
                   <div className="flex flex-col items-center justify-center h-[50vh] text-center max-w-sm mx-auto">
-                     <div className="h-16 w-16 border border-primary/30 bg-primary/5 flex items-center justify-center text-primary mb-6 animate-tech-pulse shadow-[0_0_20px_rgba(0,229,255,0.1)]">
-                        <Search size={24} />
-                     </div>
-                     <h3 className="text-[14px] font-bold text-foreground uppercase tracking-widest">Signal_Loss: Target_Not_Found</h3>
-                     <p className="text-[10px] text-muted-foreground font-medium mt-3 uppercase tracking-[0.2em] opacity-60">Adjust query parameters to locate requested node data.</p>
+                    <div className="h-16 w-16 border border-primary/30 bg-primary/5 flex items-center justify-center text-primary mb-6 animate-tech-pulse shadow-[0_0_20px_rgba(0,229,255,0.1)]">
+                      <Search size={24} />
+                    </div>
+                    <h3 className="text-[14px] font-bold text-foreground uppercase tracking-widest">Signal_Loss: Target_Not_Found</h3>
+                    <p className="text-[10px] text-muted-foreground font-medium mt-3 uppercase tracking-[0.2em] opacity-60">Adjust query parameters to locate requested node data.</p>
                   </div>
-               ) : (filteredMessages.length === 0) ? (
+                ) : activeFilter === 'media' ? (
                   <div className="flex flex-col items-center justify-center h-[50vh] text-center max-w-sm mx-auto">
-                     <div className="h-20 w-20 border border-primary/50 bg-primary/10 flex items-center justify-center text-primary mb-6 shadow-[0_0_30px_rgba(0,229,255,0.15)] group relative">
-                        <div className="absolute inset-x-0 h-[1px] bg-primary/50 top-1/2 -translate-y-1/2"></div>
-                        <div className="absolute inset-y-0 w-[1px] bg-primary/50 left-1/2 -translate-x-1/2"></div>
-                        <Layout size={32} className="relative z-10 bg-background/50 p-1" />
-                     </div>
-                     <h3 className="text-[16px] font-bold text-foreground uppercase tracking-widest">Protocol::Initialize</h3>
-                     <p className="text-[10px] text-muted-foreground font-medium mt-3 uppercase tracking-[0.2em] opacity-60 leading-relaxed">
-                        Awaiting initial input sequence to establish connection with <span className="text-primary border-b border-primary/30">[{roomName}]</span>.
-                     </p>
+                    <div className="h-16 w-16 border border-primary/30 bg-primary/5 flex items-center justify-center text-primary mb-6 shadow-[0_0_20px_rgba(0,229,255,0.1)]">
+                      <Image size={24} />
+                    </div>
+                    <h3 className="text-[14px] font-bold text-foreground uppercase tracking-widest">Media_Vault: Empty</h3>
+                    <p className="text-[10px] text-muted-foreground font-medium mt-3 uppercase tracking-[0.2em] opacity-60">No media files have been transmitted in this channel.</p>
                   </div>
-               ) : (
-                  filteredMessages.map((message) => (
-                    <Message
-                      key={message.id}
-                      message={message}
-                      currentUser={currentUser}
-                      onReaction={(emoji) => onReaction?.(message.id, emoji)}
-                      onPin={() => onPinMessage?.(message.id)}
-                    />
-                  ))
-               )}
-               <div ref={messagesEndRef} className="h-4" />
+                ) : activeFilter === 'files' ? (
+                  <div className="flex flex-col items-center justify-center h-[50vh] text-center max-w-sm mx-auto">
+                    <div className="h-16 w-16 border border-primary/30 bg-primary/5 flex items-center justify-center text-primary mb-6 shadow-[0_0_20px_rgba(0,229,255,0.1)]">
+                      <FileText size={24} />
+                    </div>
+                    <h3 className="text-[14px] font-bold text-foreground uppercase tracking-widest">File_Archive: Null</h3>
+                    <p className="text-[10px] text-muted-foreground font-medium mt-3 uppercase tracking-[0.2em] opacity-60">No file transfers recorded in this conversation.</p>
+                  </div>
+                ) : activeFilter === 'pinned' ? (
+                  <div className="flex flex-col items-center justify-center h-[50vh] text-center max-w-sm mx-auto">
+                    <div className="h-16 w-16 border border-primary/30 bg-primary/5 flex items-center justify-center text-primary mb-6 shadow-[0_0_20px_rgba(0,229,255,0.1)]">
+                      <Pin size={24} />
+                    </div>
+                    <h3 className="text-[14px] font-bold text-foreground uppercase tracking-widest">Pin_Board: Clear</h3>
+                    <p className="text-[10px] text-muted-foreground font-medium mt-3 uppercase tracking-[0.2em] opacity-60">No messages have been pinned to this channel.</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-[50vh] text-center max-w-sm mx-auto">
+                    <div className="h-20 w-20 border border-primary/50 bg-primary/10 flex items-center justify-center text-primary mb-6 shadow-[0_0_30px_rgba(0,229,255,0.15)] group relative">
+                      <div className="absolute inset-x-0 h-[1px] bg-primary/50 top-1/2 -translate-y-1/2" />
+                      <div className="absolute inset-y-0 w-[1px] bg-primary/50 left-1/2 -translate-x-1/2" />
+                      <Layout size={32} className="relative z-10 bg-background/50 p-1" />
+                    </div>
+                    <h3 className="text-[16px] font-bold text-foreground uppercase tracking-widest">Protocol::Initialize</h3>
+                    <p className="text-[10px] text-muted-foreground font-medium mt-3 uppercase tracking-[0.2em] opacity-60 leading-relaxed">
+                      Awaiting initial input sequence to establish connection with <span className="text-primary border-b border-primary/30">[{roomName}]</span>.
+                    </p>
+                  </div>
+                )
+              ) : (
+                groupedMessages.map((group) => (
+                  <React.Fragment key={group.date}>
+                    <div className="flex items-center gap-4 py-1">
+                      <div className="flex-1 h-[1px] bg-border/50" />
+                      <span className="text-[8px] uppercase tracking-[0.3em] text-muted-foreground font-bold shrink-0">
+                        {formatDateLabel(group.date)}
+                      </span>
+                      <div className="flex-1 h-[1px] bg-border/50" />
+                    </div>
+                    {group.messages.map((message) => (
+                      <Message
+                        key={message.id}
+                        message={message}
+                        currentUser={currentUser}
+                        onReaction={(emoji) => onReaction?.(message.id, emoji)}
+                        onPin={() => onPinMessage?.(message.id)}
+                      />
+                    ))}
+                  </React.Fragment>
+                ))
+              )}
+              <div ref={messagesEndRef} className="h-4" />
             </div>
           </ChatContainer>
 
@@ -211,8 +440,99 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
             onFileSelect={onFileSelect}
             onPolish={onPolish}
             isPolishing={isPolishing}
+            onEmojiSelect={onEmojiSelect}
           />
         </div>
+
+        {/* Room Info Panel */}
+        {showInfoPanel && (
+          <div className="w-[320px] border-l border-border bg-background/80 backdrop-blur-md overflow-y-auto">
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-[0.25em] font-bold text-foreground">Room_Info</span>
+              <button
+                onClick={() => setShowInfoPanel(false)}
+                className="text-muted-foreground hover:text-primary transition-colors"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              <div className="text-[9px] uppercase tracking-[0.2em] text-muted-foreground font-bold mb-3">Stats</div>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { icon: Users, label: 'Members', value: onlineUsers },
+                  { icon: MessageSquare, label: 'Messages', value: messages.length },
+                  { icon: Image, label: 'Media', value: mediaCount },
+                  { icon: FileText, label: 'Files', value: fileCount },
+                ].map(stat => (
+                  <div key={stat.label} className="tech-card p-3 flex flex-col items-center gap-2">
+                    <stat.icon size={14} className="text-primary" />
+                    <span className="text-[18px] font-bold text-foreground font-mono">{stat.value}</span>
+                    <span className="text-[7px] uppercase tracking-[0.2em] text-muted-foreground">{stat.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-border space-y-3">
+              <div className="text-[9px] uppercase tracking-[0.2em] text-muted-foreground font-bold mb-3">Configuration</div>
+
+              <div className="flex items-center justify-between py-2">
+                <div className="flex items-center gap-2">
+                  {isMuted ? <BellOff size={12} className="text-muted-foreground" /> : <Bell size={12} className="text-primary" />}
+                  <span className="text-[9px] uppercase tracking-wider text-foreground">Notifications</span>
+                </div>
+                <button
+                  onClick={() => setIsMuted(prev => !prev)}
+                  className={cn(
+                    'text-[8px] uppercase tracking-wider px-2 py-1 border rounded font-bold transition-colors',
+                    isMuted
+                      ? 'border-destructive/30 text-destructive hover:bg-destructive/10'
+                      : 'border-primary/30 text-primary hover:bg-primary/10'
+                  )}
+                >
+                  {isMuted ? 'Muted' : 'Active'}
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between py-2">
+                <div className="flex items-center gap-2">
+                  <Lock size={12} className="text-primary" />
+                  <span className="text-[9px] uppercase tracking-wider text-foreground">Encryption</span>
+                </div>
+                <span className="text-[8px] uppercase tracking-wider text-primary font-bold">E2E</span>
+              </div>
+
+              <div className="flex items-center justify-between py-2">
+                <div className="flex items-center gap-2">
+                  <Trash2 size={12} className="text-muted-foreground" />
+                  <span className="text-[9px] uppercase tracking-wider text-foreground">Auto-Delete</span>
+                </div>
+                <span className="text-[8px] uppercase tracking-wider text-muted-foreground">Off</span>
+              </div>
+
+              <div className="flex items-center justify-between py-2">
+                <div className="flex items-center gap-2">
+                  <Globe size={12} className="text-primary" />
+                  <span className="text-[9px] uppercase tracking-wider text-foreground">Visibility</span>
+                </div>
+                <span className="text-[8px] uppercase tracking-wider text-primary font-bold">Public</span>
+              </div>
+            </div>
+
+            {onClearHistory && (
+              <div className="p-4 border-t border-border">
+                <button
+                  onClick={onClearHistory}
+                  className="w-full py-2 border border-destructive/30 text-destructive text-[9px] uppercase tracking-[0.25em] font-bold hover:bg-destructive/10 transition-colors"
+                >
+                  Clear History
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

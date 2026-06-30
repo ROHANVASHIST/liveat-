@@ -87,6 +87,7 @@ function App() {
   const [isPolishing, setIsPolishing] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [theme, setTheme] = useState<'black' | 'light'>(() => (localStorage.getItem('concierge-theme') as 'black' | 'light') || 'black');
+  const [replyToMsg, setReplyToMsg] = useState<Message | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -315,8 +316,8 @@ function App() {
             const filtered = prev.filter(u => u.id !== data.userId && u.id !== 'ai-concierge-node');
             return [{
                id: 'ai-concierge-node',
-               name: 'NVIDIA Nemotron',
-               avatar: 'https://cdn-icons-png.flaticon.com/512/12222/12222588.png',
+                name: 'Concierge Core',
+                avatar: 'https://cdn-icons-png.flaticon.com/512/8649/8649307.png',
                status: 'online'
             }, ...filtered, {
               id: data.userId,
@@ -486,7 +487,7 @@ function App() {
     setMessages(prev => [...prev, {
       id: Date.now().toString() + '-summary',
       senderId: 'ai-concierge-node',
-      senderName: 'NVIDIA Nemotron (System Summary)',
+      senderName: 'Concierge Core (System Summary)',
       content: summary,
       timestamp: new Date(),
       isSelf: false,
@@ -494,6 +495,18 @@ function App() {
       isPinned: true
     }]);
     setIsSummarizing(false);
+  };
+
+  const handleReply = (message: Message) => {
+    setReplyToMsg(message);
+  };
+
+  const handleCancelReply = () => {
+    setReplyToMsg(null);
+  };
+
+  const handleEmojiSelect = (emoji: string) => {
+    setCurrentMessage(prev => prev + emoji);
   };
 
   const handleFileUpload = (file: File) => {
@@ -625,6 +638,7 @@ function App() {
           }}
           onSelectNav={setActiveNav}
           onOpenProfile={() => setActiveNav('settings')}
+          onCreateRoom={() => setIsCreateRoomOpen(true)}
         />
       </div>
 
@@ -654,6 +668,9 @@ function App() {
             isPolishing={isPolishing}
             onSummarize={handleSummarize}
             isSummarizing={isSummarizing}
+            replyTo={replyToMsg}
+            onCancelReply={handleCancelReply}
+            onEmojiSelect={handleEmojiSelect}
           />
         )}
 

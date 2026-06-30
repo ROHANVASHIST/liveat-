@@ -9,7 +9,9 @@ import {
   Video,
   MoreVertical,
   Trash2,
-  Download
+  Download,
+  Info,
+  PanelRightOpen
 } from 'lucide-react';
 
 interface ChatHeaderProps {
@@ -25,6 +27,9 @@ interface ChatHeaderProps {
   onClearHistory?: () => void;
   onExport?: () => void;
   typingUserNames?: string[];
+  showInfo?: boolean;
+  onInfoToggle?: () => void;
+  onSearchToggle?: () => void;
 }
 
 export const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -39,6 +44,9 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   onClearHistory,
   onExport,
   typingUserNames = [],
+  showInfo,
+  onInfoToggle,
+  onSearchToggle,
 }) => {
   const [showMenu, setShowMenu] = React.useState(false);
 
@@ -110,6 +118,33 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
          )}
          
          <div className="w-[1px] h-5 bg-border mx-0.5 hidden sm:block" />
+
+         {/* Info toggle button */}
+         {onInfoToggle && (
+           <button 
+             onClick={onInfoToggle}
+             className={cn(
+               "h-9 w-9 border flex items-center justify-center transition-colors",
+               showInfo
+                 ? "border-primary/40 bg-primary/10 text-primary"
+                 : "border-border hover:bg-muted text-muted-foreground hover:text-foreground"
+             )}
+             title={showInfo ? "Close info panel" : "Open info panel"}
+           >
+             <Info size={14} />
+           </button>
+         )}
+
+         {/* Search toggle button */}
+         {onSearchToggle && (
+           <button 
+             onClick={onSearchToggle}
+             className="h-9 w-9 border border-border flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+             title="Search messages"
+           >
+             <PanelRightOpen size={14} />
+           </button>
+         )}
          
          {/* More Menu */}
          <div className="relative">

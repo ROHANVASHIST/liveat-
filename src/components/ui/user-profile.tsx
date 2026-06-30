@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   User, 
   Shield, 
@@ -13,7 +13,16 @@ import {
   Volume2,
   Terminal,
   Activity,
-  Cpu
+  Cpu,
+  BarChart3,
+  Smartphone,
+  Laptop,
+  Clock,
+  KeyRound,
+  RefreshCw,
+  HardDrive,
+  MessageSquare,
+  Wifi
 } from 'lucide-react';
 import { AvatarImage } from './avatar';
 import { cn } from '@/lib/utils';
@@ -31,12 +40,36 @@ interface UserProfileProps {
   onThemeChange: (theme: 'black' | 'light') => void;
 }
 
+const generateSessions = (email: string) => {
+  const prefix = email?.split('@')[0] || 'operator';
+  return [
+    { id: '1', device: 'NODE_ALPHA // Desktop', ip: `192.168.1.42`, lastActive: '2 min ago', icon: Monitor },
+    { id: '2', device: 'NODE_BETA // Mobile', ip: `10.0.0.${Math.floor(Math.random() * 100) + 10}`, lastActive: '47 min ago', icon: Smartphone },
+    { id: '3', device: 'NODE_GAMMA // Laptop', ip: `172.16.0.${Math.floor(Math.random() * 50) + 1}`, lastActive: '3 hrs ago', icon: Laptop },
+  ];
+};
+
 export const UserProfile: React.FC<UserProfileProps> = ({ user, onUpdate, onLogout, theme, onThemeChange }) => {
   const [activeTab, setActiveTab] = useState('profile');
   const [name, setName] = useState(user.name);
   const [email, setEmail] = useState(user.email || '');
   const [avatar, setAvatar] = useState(user.avatar || '');
-  
+  const [twoFAEnabled, setTwoFAEnabled] = useState(true);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+
+  const stats = useMemo(() => ({
+    messagesSent: Math.floor(Math.random() * 15000) + 5000,
+    messagesReceived: Math.floor(Math.random() * 12000) + 8000,
+    storageUsed: (Math.random() * 850 + 150).toFixed(1),
+    connectedDevices: Math.floor(Math.random() * 5) + 2,
+    accountAgeDays: Math.floor(Math.random() * 800) + 100,
+    lastLogin: new Date(Date.now() - Math.random() * 86400000 * 3).toISOString().replace('T', ' ').slice(0, 19),
+  }), []);
+
+  const sessions = useMemo(() => generateSessions(user.email || ''), []);
+
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const reader = new FileReader();
@@ -51,6 +84,8 @@ export const UserProfile: React.FC<UserProfileProps> = ({ user, onUpdate, onLogo
     { id: 'profile', label: 'Operator_Identity', icon: User },
     { id: 'widget', label: 'Theme_Config', icon: Palette },
     { id: 'notifications', label: 'Signal_Rules', icon: Bell },
+    { id: 'security', label: 'Security_Matrix', icon: Shield },
+    { id: 'metrics', label: 'Data_Metrics', icon: BarChart3 },
     { id: 'integrations', label: 'External_Mesh', icon: Globe },
   ];
 
@@ -73,7 +108,7 @@ export const UserProfile: React.FC<UserProfileProps> = ({ user, onUpdate, onLogo
 
       <div className="flex-1 flex gap-8 p-8 overflow-hidden">
         {/* Navigation Matrix */}
-        <aside className="w-64 space-y-1">
+        <aside className="w-64 space-y-1 flex-shrink-0">
           <div className="text-[9px] uppercase tracking-[0.3em] text-muted-foreground mb-4 opacity-50 px-2 font-bold">Subsystem Index</div>
           {navItems.map((item) => (
             <button
@@ -231,6 +266,211 @@ export const UserProfile: React.FC<UserProfileProps> = ({ user, onUpdate, onLogo
                     </button>
                  </div>
                ))}
+            </div>
+          )}
+
+          {activeTab === 'security' && (
+            <div className="space-y-6">
+              {/* Two-Factor Authentication */}
+              <div className="tech-card p-6 bg-muted/10 border-primary/10 transition-all">
+                <div className="flex items-center justify-between mb-6 pb-4 border-b border-border">
+                  <div className="flex items-center gap-3">
+                    <Shield size={18} className="text-primary" />
+                    <h4 className="text-[11px] font-bold uppercase tracking-widest">Two-Factor Authentication</h4>
+                  </div>
+                  <button
+                    onClick={() => setTwoFAEnabled(!twoFAEnabled)}
+                    className={cn(
+                      "h-6 w-12 border transition-all relative",
+                      twoFAEnabled ? "border-primary bg-primary/10" : "border-border bg-muted/20"
+                    )}
+                  >
+                    <div className={cn(
+                      "h-full w-6 transition-transform",
+                      twoFAEnabled ? "bg-primary translate-x-full" : "bg-muted-foreground translate-x-0 opacity-30"
+                    )} />
+                  </button>
+                </div>
+                <div className="flex items-center gap-3 text-[10px] text-muted-foreground uppercase tracking-widest">
+                  <Clock size={12} />
+                  <span className="opacity-70">Last Login: {stats.lastLogin}</span>
+                </div>
+              </div>
+
+              {/* Password Change */}
+              <div className="tech-card p-6 bg-muted/10 border-primary/10 transition-all">
+                <div className="flex items-center gap-3 mb-6 pb-4 border-b border-border">
+                  <KeyRound size={18} className="text-primary" />
+                  <h4 className="text-[11px] font-bold uppercase tracking-widest">Credential Rotation</h4>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-bold uppercase text-muted-foreground tracking-widest opacity-60">Current Passkey</label>
+                    <input
+                      type="password"
+                      value={currentPassword}
+                      onChange={e => setCurrentPassword(e.target.value)}
+                      placeholder="********"
+                      className="w-full h-11 bg-background border border-border focus:border-primary/50 px-4 text-[11px] outline-none transition-all"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-bold uppercase text-muted-foreground tracking-widest opacity-60">New Passkey</label>
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={e => setNewPassword(e.target.value)}
+                      placeholder="ENTER NEW"
+                      className="w-full h-11 bg-background border border-border focus:border-primary/50 px-4 text-[11px] outline-none transition-all"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-bold uppercase text-muted-foreground tracking-widest opacity-60">Confirm Passkey</label>
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={e => setConfirmPassword(e.target.value)}
+                      placeholder="CONFIRM NEW"
+                      className="w-full h-11 bg-background border border-border focus:border-primary/50 px-4 text-[11px] outline-none transition-all"
+                    />
+                  </div>
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <button className="tech-btn h-9 px-6 text-[10px] uppercase tracking-widest font-bold">
+                    <RefreshCw size={12} className="mr-2" />
+                    Rotate Keys
+                  </button>
+                </div>
+              </div>
+
+              {/* Active Sessions */}
+              <div className="tech-card p-6 bg-muted/10 border-primary/10 transition-all">
+                <div className="flex items-center gap-3 mb-6 pb-4 border-b border-border">
+                  <Monitor size={18} className="text-primary" />
+                  <h4 className="text-[11px] font-bold uppercase tracking-widest">Active Sessions</h4>
+                </div>
+                <div className="space-y-3">
+                  {sessions.map((session) => (
+                    <div key={session.id} className="flex items-center justify-between p-3 border border-border hover:border-primary/20 transition-all group">
+                      <div className="flex items-center gap-4">
+                        <div className="h-8 w-8 border border-border flex items-center justify-center text-muted-foreground group-hover:text-primary transition-colors">
+                          <session.icon size={14} />
+                        </div>
+                        <div>
+                          <p className="text-[11px] font-bold uppercase tracking-widest">{session.device}</p>
+                          <div className="flex items-center gap-3 mt-1 text-[9px] text-muted-foreground uppercase tracking-widest opacity-60">
+                            <span>IP: {session.ip}</span>
+                            <span>Active: {session.lastActive}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <button className="text-[9px] font-bold uppercase tracking-widest text-red-500 hover:text-red-400 border border-red-500/20 hover:border-red-500/40 px-3 py-1.5 transition-all">
+                        Revoke
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'metrics' && (
+            <div className="space-y-6">
+              {/* Stats Grid */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="tech-card p-5 bg-muted/10 border-primary/10 transition-all flex flex-col items-start gap-3">
+                  <div className="h-8 w-8 border border-border flex items-center justify-center text-primary">
+                    <MessageSquare size={16} />
+                  </div>
+                  <div>
+                    <p className="text-[20px] font-bold tracking-widest">{stats.messagesSent.toLocaleString()}</p>
+                    <p className="text-[9px] text-muted-foreground uppercase tracking-widest font-bold opacity-60 mt-1">Sent</p>
+                  </div>
+                </div>
+                <div className="tech-card p-5 bg-muted/10 border-primary/10 transition-all flex flex-col items-start gap-3">
+                  <div className="h-8 w-8 border border-border flex items-center justify-center text-primary">
+                    <Mail size={16} />
+                  </div>
+                  <div>
+                    <p className="text-[20px] font-bold tracking-widest">{stats.messagesReceived.toLocaleString()}</p>
+                    <p className="text-[9px] text-muted-foreground uppercase tracking-widest font-bold opacity-60 mt-1">Received</p>
+                  </div>
+                </div>
+                <div className="tech-card p-5 bg-muted/10 border-primary/10 transition-all flex flex-col items-start gap-3">
+                  <div className="h-8 w-8 border border-border flex items-center justify-center text-primary">
+                    <HardDrive size={16} />
+                  </div>
+                  <div>
+                    <p className="text-[20px] font-bold tracking-widest">{stats.storageUsed} MB</p>
+                    <p className="text-[9px] text-muted-foreground uppercase tracking-widest font-bold opacity-60 mt-1">Storage Used</p>
+                  </div>
+                </div>
+                <div className="tech-card p-5 bg-muted/10 border-primary/10 transition-all flex flex-col items-start gap-3">
+                  <div className="h-8 w-8 border border-border flex items-center justify-center text-primary">
+                    <Wifi size={16} />
+                  </div>
+                  <div>
+                    <p className="text-[20px] font-bold tracking-widest">{stats.connectedDevices}</p>
+                    <p className="text-[9px] text-muted-foreground uppercase tracking-widest font-bold opacity-60 mt-1">Devices</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Account Age */}
+              <div className="tech-card p-6 bg-muted/10 border-primary/10 transition-all">
+                <div className="flex items-center justify-between mb-6 pb-4 border-b border-border">
+                  <div className="flex items-center gap-3">
+                    <Clock size={18} className="text-primary" />
+                    <h4 className="text-[11px] font-bold uppercase tracking-widest">Account Longevity</h4>
+                  </div>
+                  <span className="text-[20px] font-bold tracking-widest text-primary">{stats.accountAgeDays} <span className="text-[10px] text-muted-foreground opacity-60">Days</span></span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-2 bg-muted/20 border border-border overflow-hidden">
+                    <div
+                      className="h-full bg-primary transition-all"
+                      style={{ width: `${Math.min(100, (stats.accountAgeDays / 1000) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Data Usage Bar Chart */}
+              <div className="tech-card p-6 bg-muted/10 border-primary/10 transition-all">
+                <div className="flex items-center gap-3 mb-6 pb-4 border-b border-border">
+                  <BarChart3 size={18} className="text-primary" />
+                  <h4 className="text-[11px] font-bold uppercase tracking-widest">Data Usage Metrics</h4>
+                </div>
+                <div className="space-y-4">
+                  {[
+                    { label: 'Messages TX', value: 92, color: 'bg-primary' },
+                    { label: 'Messages RX', value: 78, color: 'bg-primary/70' },
+                    { label: 'Media Transfer', value: 45, color: 'bg-primary/50' },
+                    { label: 'System Overhead', value: 30, color: 'bg-primary/30' },
+                  ].map((item) => (
+                    <div key={item.label} className="flex items-center gap-4">
+                      <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground opacity-70 w-28 flex-shrink-0">{item.label}</span>
+                      <div className="flex-1 h-3 bg-muted/20 border border-border overflow-hidden">
+                        <div
+                          className={`h-full ${item.color} transition-all`}
+                          style={{ width: `${item.value}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] font-bold tracking-widest text-muted-foreground w-10 text-right">{item.value}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'integrations' && (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center space-y-4">
+                <Cpu size={40} className="text-muted-foreground/30 mx-auto" />
+                <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground opacity-60">External Mesh Interface</p>
+                <p className="text-[9px] text-muted-foreground uppercase tracking-widest opacity-30">Pending protocol handshake...</p>
+              </div>
             </div>
           )}
         </main>

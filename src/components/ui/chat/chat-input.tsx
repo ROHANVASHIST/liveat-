@@ -7,8 +7,17 @@ import {
   Plus,
   Wand,
   Terminal,
-  Activity
+  Activity,
+  Smile,
+  X
 } from 'lucide-react';
+
+interface Message {
+  id: string;
+  senderId: string;
+  senderName: string;
+  content: string;
+}
 
 interface ChatInputProps {
   value: string;
@@ -20,7 +29,12 @@ interface ChatInputProps {
   onFileSelect?: (file: File) => void;
   onPolish?: () => void;
   isPolishing?: boolean;
+  replyTo?: Message | null;
+  onCancelReply?: () => void;
+  onEmojiSelect?: (emoji: string) => void;
 }
+
+const EMOJI_LIST = ['👍', '❤️', '😂', '😮', '😢', '😡', '🎉', '🔥', '✅', '❌', '💯', '👋'];
 
 export const ChatInput: React.FC<ChatInputProps> = ({
   value,
@@ -31,9 +45,26 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onFileSelect,
   onPolish,
   isPolishing,
+  replyTo,
+  onCancelReply,
+  onEmojiSelect,
 }) => {
   const [isRecording, setIsRecording] = React.useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = React.useState(false);
   const recognitionRef = React.useRef<any>(null);
+  const emojiRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (emojiRef.current && !emojiRef.current.contains(e.target as Node)) {
+        setShowEmojiPicker(false);
+      }
+    };
+    if (showEmojiPicker) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showEmojiPicker]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -80,80 +111,125 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     recognitionRef.current = recognition;
   };
 
+  const handleEmojiClick = (emoji: string) => {
+    onEmojiSelect?.(emoji);
+    setShowEmojiPicker(false);
+  };
+
   return (
     <div className="p-4 md:p-6 bg-background border-t border-border mt-auto font-mono">
-      <div className="max-w-5xl mx-auto flex items-end gap-3 p-1.5 border border-border bg-muted/10 group focus-within:border-primary/40 transition-all">
-        <div className="flex items-center gap-1">
-            <input
-              type="file"
-              id="file-upload"
-              className="hidden"
-              onChange={handleFileChange}
-            />
-            <label
-              htmlFor="file-upload"
-              className="h-10 w-10 flex items-center justify-center cursor-pointer text-muted-foreground hover:text-primary transition-colors border border-transparent hover:border-border"
+      <div className="max-w-5xl mx-auto">
+        {replyTo && onCancelReply && (
+          <div className="flex items-center gap-2 px-3 py-1.5 mb-2 border border-primary/30 bg-primary/5 text-[11px] tracking-wider">
+            <span className="text-primary/70 uppercase shrink-0">Replying to:</span>
+            <span className="text-foreground font-semibold truncate min-w-0">{replyTo.senderName}</span>
+            <span className="text-muted-foreground truncate min-w-0">- {replyTo.content}</span>
+            <button
+              onClick={onCancelReply}
+              className="ml-auto shrink-0 h-5 w-5 flex items-center justify-center text-muted-foreground hover:text-primary transition-colors"
             >
-              <Plus size={18} />
-            </label>
-        </div>
-
-        <div className="flex-1 min-w-0 pb-1.5">
-          <textarea
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={isRecording ? "ANALYZING_VOICE..." : "CMD >_"}
-            rows={1}
-            disabled={disabled || isLoading}
-            className={cn(
-              "w-full bg-transparent border-none focus:ring-0 resize-none py-2 text-[13px] tracking-widest max-h-48 min-h-[40px] transition-all outline-none",
-              isRecording ? "text-primary animate-pulse" : "text-foreground placeholder:text-muted-foreground/30"
-            )}
-            style={{ height: 'auto' }}
-          />
-        </div>
-
-        <div className="flex items-center gap-1.5 pb-1">
-            <button 
-              onClick={startSpeechRecognition}
-              className={cn(
-                "h-10 w-10 flex items-center justify-center transition-all border",
-                isRecording ? "text-primary border-primary bg-primary/10" : "text-muted-foreground border-transparent hover:border-border"
-              )}
-            >
-              <Mic size={16} className={cn(isRecording && "animate-pulse")} />
+              <X size={14} />
             </button>
-            {onPolish && (
+          </div>
+        )}
+        <div className="flex items-end gap-3 p-1.5 border border-border bg-muted/10 group focus-within:border-primary/40 transition-all">
+          <div className="flex items-center gap-1">
+              <input
+                type="file"
+                id="file-upload"
+                className="hidden"
+                onChange={handleFileChange}
+              />
+              <label
+                htmlFor="file-upload"
+                className="h-10 w-10 flex items-center justify-center cursor-pointer text-muted-foreground hover:text-primary transition-colors border border-transparent hover:border-border"
+              >
+                <Plus size={18} />
+              </label>
+          </div>
+
+          <div className="flex-1 min-w-0 pb-1.5">
+            <textarea
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={isRecording ? "ANALYZING_VOICE..." : "CMD >_"}
+              rows={1}
+              disabled={disabled || isLoading}
+              className={cn(
+                "w-full bg-transparent border-none focus:ring-0 resize-none py-2 text-[13px] tracking-widest max-h-48 min-h-[40px] transition-all outline-none",
+                isRecording ? "text-primary animate-pulse" : "text-foreground placeholder:text-muted-foreground/30"
+              )}
+              style={{ height: 'auto' }}
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5 pb-1">
               <button 
-                onClick={onPolish}
-                disabled={!value.trim() || isPolishing || isLoading}
+                onClick={startSpeechRecognition}
                 className={cn(
                   "h-10 w-10 flex items-center justify-center transition-all border",
-                  isPolishing ? "text-primary border-primary bg-primary/10" : "text-muted-foreground border-transparent hover:border-border disabled:opacity-20"
+                  isRecording ? "text-primary border-primary bg-primary/10" : "text-muted-foreground border-transparent hover:border-border"
                 )}
               >
-                <Wand size={16} className={cn(isPolishing && "animate-spin")} />
+                <Mic size={16} className={cn(isRecording && "animate-pulse")} />
               </button>
-            )}
-            <button
-              onClick={onSend}
-              disabled={(!value.trim() && !isLoading) || disabled}
-              className={cn(
-                "tech-btn h-10 px-4 flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest",
-                !value.trim() && "opacity-20 grayscale pointer-events-none"
+              {onPolish && (
+                <button 
+                  onClick={onPolish}
+                  disabled={!value.trim() || isPolishing || isLoading}
+                  className={cn(
+                    "h-10 w-10 flex items-center justify-center transition-all border",
+                    isPolishing ? "text-primary border-primary bg-primary/10" : "text-muted-foreground border-transparent hover:border-border disabled:opacity-20"
+                  )}
+                >
+                  <Wand size={16} className={cn(isPolishing && "animate-spin")} />
+                </button>
               )}
-            >
-              <span className="hidden sm:inline">Execute</span>
-              <SendHorizontal size={14} />
-            </button>
+              {onEmojiSelect && (
+                <div className="relative" ref={emojiRef}>
+                  <button
+                    onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                    className={cn(
+                      "h-10 w-10 flex items-center justify-center transition-all border",
+                      showEmojiPicker ? "text-primary border-primary bg-primary/10" : "text-muted-foreground border-transparent hover:border-border"
+                    )}
+                  >
+                    <Smile size={16} />
+                  </button>
+                  {showEmojiPicker && (
+                    <div className="absolute bottom-full right-0 mb-2 p-2 border border-border bg-background shadow-lg grid grid-cols-6 gap-1 z-50">
+                      {EMOJI_LIST.map((emoji) => (
+                        <button
+                          key={emoji}
+                          onClick={() => handleEmojiClick(emoji)}
+                          className="h-8 w-8 flex items-center justify-center text-base hover:bg-primary/10 border border-transparent hover:border-primary/30 transition-all"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <button
+                onClick={onSend}
+                disabled={(!value.trim() && !isLoading) || disabled}
+                className={cn(
+                  "tech-btn h-10 px-4 flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest",
+                  !value.trim() && "opacity-20 grayscale pointer-events-none"
+                )}
+              >
+                <span className="hidden sm:inline">Execute</span>
+                <SendHorizontal size={14} />
+              </button>
+          </div>
         </div>
-      </div>
-      <div className="max-w-5xl mx-auto flex justify-between mt-2 opacity-50 px-2">
-         <span className="text-[8px] uppercase tracking-[0.2em] text-muted-foreground">Encryption: AES-256-GCM</span>
-         <span className="text-[8px] uppercase tracking-[0.2em] text-muted-foreground">Buffer State: {value.length}/4096</span>
+        <div className="max-w-5xl mx-auto flex justify-between mt-2 opacity-50 px-2">
+           <span className="text-[8px] uppercase tracking-[0.2em] text-muted-foreground">Encryption: AES-256-GCM</span>
+           <span className="text-[8px] uppercase tracking-[0.2em] text-muted-foreground">Buffer State: {value.length}/4096</span>
+        </div>
       </div>
     </div>
   );
 };
-

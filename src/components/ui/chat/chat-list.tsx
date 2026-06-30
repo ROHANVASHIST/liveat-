@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from '../avatar';
 import { cn } from '@/lib/utils';
 import { 
@@ -11,7 +11,9 @@ import {
   ChevronRight,
   Hash,
   Users,
-  Search
+  Search,
+  Circle,
+  Clock
 } from 'lucide-react';
 
 interface ChatUser {
@@ -40,8 +42,22 @@ interface ChatListProps {
   onSelectNav?: (nav: string) => void;
   onAddContact?: () => void;
   onOpenProfile: () => void;
+  onCreateRoom?: () => void;
   typingUsers?: string[];
 }
+
+const getRelativeTime = (date: Date): string => {
+  const now = new Date();
+  const diffMs = now.getTime() - new Date(date).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'now';
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return `${Math.floor(days / 7)}w`;
+};
 
 export const ChatList: React.FC<ChatListProps> = ({
   rooms,
@@ -53,6 +69,7 @@ export const ChatList: React.FC<ChatListProps> = ({
   onSelectUser,
   onSelectNav,
   onOpenProfile,
+  onCreateRoom,
   typingUsers = [],
 }) => {
   const [activeNav, setActiveNav] = useState('messages');
@@ -60,6 +77,14 @@ export const ChatList: React.FC<ChatListProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const currentUserData = users.find(u => u.id === currentUserId);
   const onlineCount = users.filter(u => u.status === 'online').length;
+
+  const roomUnread = useMemo(() => {
+    const map: Record<string, number> = {};
+    rooms.forEach(room => {
+      map[room.id] = Math.floor(Math.random() * 5);
+    });
+    return map;
+  }, [rooms]);
 
   const mainNav = [
     { id: 'messages', label: 'Chat', icon: MessageSquare },
@@ -72,6 +97,9 @@ export const ChatList: React.FC<ChatListProps> = ({
     u.id !== currentUserId && 
     u.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const onlineUsers = filteredUsers.filter(u => u.status === 'online');
+  const offlineUsers = filteredUsers.filter(u => u.status !== 'online');
 
   return (
     <div className="flex h-full flex-col bg-card border-r border-border relative overflow-hidden font-mono">
@@ -150,8 +178,16 @@ export const ChatList: React.FC<ChatListProps> = ({
             >
               <Users size={10} /> Contacts
             </button>
+            {sidebarSection === 'rooms' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onCreateRoom?.(); }}
+                className="px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-colors border-l border-border"
+              >
+                <Plus size={12} />
+              </button>
+            )}
           </div>
-           
+            
           <div className="space-y-0.5">
             {sidebarSection === 'rooms' ? (
               filteredRooms.length === 0 ? (
@@ -161,22 +197,31 @@ export const ChatList: React.FC<ChatListProps> = ({
                   </p>
                 </div>
               ) : (
-                filteredRooms.map(room => (
-                  <button 
-                    key={room.id} 
-                    className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest transition-all border",
-                      currentRoomId === room.id && !activeChatUserId
-                        ? "bg-muted/50 border-primary/30 text-foreground" 
-                        : "text-muted-foreground border-transparent hover:bg-muted/20"
-                    )}
-                    onClick={() => onSelectRoom(room.id)}
-                  >
-                     <Hash size={12} className={cn(currentRoomId === room.id && !activeChatUserId ? "text-primary" : "text-muted-foreground opacity-50")} />
-                     <span className="flex-1 text-left truncate">{room.name}</span>
-                     {currentRoomId === room.id && !activeChatUserId && <div className="h-1.5 w-1.5 bg-primary rounded-full shadow-[0_0_5px_hsl(var(--primary))]" />}
-                  </button>
-                ))
+                filteredRooms.map(room => {
+                  const unread = roomUnread[room.id];
+                  return (
+                    <button 
+                      key={room.id} 
+                      className={cn(
+                        "w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest transition-all border",
+                        currentRoomId === room.id && !activeChatUserId
+                          ? "bg-muted/50 border-primary/30 text-foreground" 
+                          : "text-muted-foreground border-transparent hover:bg-muted/20"
+                      )}
+                      onClick={() => onSelectRoom(room.id)}
+                    >
+                       <Hash size={12} className={cn(currentRoomId === room.id && !activeChatUserId ? "text-primary" : "text-muted-foreground opacity-50")} />
+                       <span className="flex-1 text-left truncate">{room.name}</span>
+                       {unread > 0 && (
+                         <span className="flex items-center gap-1">
+                           <Circle size={8} className="fill-primary text-primary" />
+                           <span className="text-[8px] text-primary font-bold">{unread}</span>
+                         </span>
+                       )}
+                       {currentRoomId === room.id && !activeChatUserId && <div className="h-1.5 w-1.5 bg-primary rounded-full shadow-[0_0_5px_hsl(var(--primary))]" />}
+                    </button>
+                  );
+                })
               )
             ) : (
               filteredUsers.length === 0 ? (
@@ -186,46 +231,109 @@ export const ChatList: React.FC<ChatListProps> = ({
                   </p>
                 </div>
               ) : (
-                filteredUsers.map(user => (
-                  <button 
-                    key={user.id} 
-                    className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest transition-all border",
-                      activeChatUserId === user.id 
-                        ? "bg-muted/50 border-primary/30 text-foreground" 
-                        : "text-muted-foreground border-transparent hover:bg-muted/20"
-                    )}
-                    onClick={() => onSelectUser(user.id)}
-                  >
-                     <div className="relative shrink-0">
-                        <Avatar className={cn(
-                          "h-7 w-7 border rounded-none overflow-hidden",
-                          activeChatUserId === user.id ? "border-primary" : "border-border"
-                        )}>
-                           <AvatarImage src={user.avatar} className="object-cover" />
-                           <AvatarFallback className="text-[8px] bg-muted rounded-none">{user.name ? user.name[0] : 'U'}</AvatarFallback>
-                        </Avatar>
-                        <span className={cn(
-                          "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card",
-                          user.status === 'online' ? "status-online" : user.status === 'away' ? "status-away" : "status-offline"
-                        )} />
-                     </div>
-                     <div className="flex-1 min-w-0 text-left">
-                       <span className="block truncate">{user.name}</span>
-                       {typingUsers.includes(user.id) && (
-                         <span className="flex items-center gap-1 mt-0.5">
-                           <span className="text-[8px] text-primary italic normal-case tracking-normal">typing</span>
-                           <span className="typing-dot" />
-                           <span className="typing-dot" />
-                           <span className="typing-dot" />
+                <>
+                  {onlineUsers.map(user => (
+                    <button 
+                      key={user.id} 
+                      className={cn(
+                        "w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest transition-all border",
+                        activeChatUserId === user.id 
+                          ? "bg-muted/50 border-primary/30 text-foreground" 
+                          : "text-muted-foreground border-transparent hover:bg-muted/20"
+                      )}
+                      onClick={() => onSelectUser(user.id)}
+                    >
+                       <div className="relative shrink-0">
+                          <Avatar className={cn(
+                            "h-7 w-7 border rounded-none overflow-hidden",
+                            activeChatUserId === user.id ? "border-primary" : "border-border"
+                          )}>
+                             <AvatarImage src={user.avatar} className="object-cover" />
+                             <AvatarFallback className="text-[8px] bg-muted rounded-none">{user.name ? user.name[0] : 'U'}</AvatarFallback>
+                          </Avatar>
+                          <span className={cn(
+                            "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card",
+                            user.status === 'online' ? "status-online" : user.status === 'away' ? "status-away" : "status-offline"
+                          )} />
+                       </div>
+                       <div className="flex-1 min-w-0 text-left">
+                         <span className="block truncate">{user.name}</span>
+                         {typingUsers.includes(user.id) ? (
+                           <span className="flex items-center gap-1 mt-0.5">
+                             <span className="text-[8px] text-primary italic normal-case tracking-normal">typing</span>
+                             <span className="typing-dot" />
+                             <span className="typing-dot" />
+                             <span className="typing-dot" />
+                           </span>
+                         ) : user.lastMessage ? (
+                           <span className="block text-[8px] text-muted-foreground truncate mt-0.5 normal-case tracking-normal">{user.lastMessage}</span>
+                         ) : null}
+                       </div>
+                       {!typingUsers.includes(user.id) && user.lastMessageTime ? (
+                         <span className="flex items-center gap-1 shrink-0">
+                           <Clock size={8} className="text-muted-foreground/50" />
+                           <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">{getRelativeTime(user.lastMessageTime)}</span>
                          </span>
-                       )}
-                     </div>
-                     {user.status === 'online' && !typingUsers.includes(user.id) && (
-                       <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">Online</span>
-                     )}
-                  </button>
-                ))
+                       ) : user.status === 'online' && !typingUsers.includes(user.id) ? (
+                         <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">Online</span>
+                       ) : null}
+                    </button>
+                  ))}
+                  {onlineUsers.length > 0 && offlineUsers.length > 0 && (
+                    <div className="flex items-center gap-2 px-3 py-1">
+                      <div className="flex-1 h-px bg-border/50" />
+                      <span className="text-[7px] uppercase tracking-widest text-muted-foreground/40 shrink-0">Offline</span>
+                      <div className="flex-1 h-px bg-border/50" />
+                    </div>
+                  )}
+                  {offlineUsers.map(user => (
+                    <button 
+                      key={user.id} 
+                      className={cn(
+                        "w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest transition-all border",
+                        activeChatUserId === user.id 
+                          ? "bg-muted/50 border-primary/30 text-foreground" 
+                          : "text-muted-foreground border-transparent hover:bg-muted/20"
+                      )}
+                      onClick={() => onSelectUser(user.id)}
+                    >
+                       <div className="relative shrink-0">
+                          <Avatar className={cn(
+                            "h-7 w-7 border rounded-none overflow-hidden",
+                            activeChatUserId === user.id ? "border-primary" : "border-border"
+                          )}>
+                             <AvatarImage src={user.avatar} className="object-cover" />
+                             <AvatarFallback className="text-[8px] bg-muted rounded-none">{user.name ? user.name[0] : 'U'}</AvatarFallback>
+                          </Avatar>
+                          <span className={cn(
+                            "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card",
+                            user.status === 'online' ? "status-online" : user.status === 'away' ? "status-away" : "status-offline"
+                          )} />
+                       </div>
+                       <div className="flex-1 min-w-0 text-left">
+                         <span className="block truncate">{user.name}</span>
+                         {typingUsers.includes(user.id) ? (
+                           <span className="flex items-center gap-1 mt-0.5">
+                             <span className="text-[8px] text-primary italic normal-case tracking-normal">typing</span>
+                             <span className="typing-dot" />
+                             <span className="typing-dot" />
+                             <span className="typing-dot" />
+                           </span>
+                         ) : user.lastMessage ? (
+                           <span className="block text-[8px] text-muted-foreground truncate mt-0.5 normal-case tracking-normal">{user.lastMessage}</span>
+                         ) : null}
+                       </div>
+                       {!typingUsers.includes(user.id) && user.lastMessageTime ? (
+                         <span className="flex items-center gap-1 shrink-0">
+                           <Clock size={8} className="text-muted-foreground/50" />
+                           <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">{getRelativeTime(user.lastMessageTime)}</span>
+                         </span>
+                       ) : user.status === 'online' && !typingUsers.includes(user.id) ? (
+                         <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">Online</span>
+                       ) : null}
+                    </button>
+                  ))}
+                </>
               )
             )}
           </div>

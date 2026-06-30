@@ -1,16 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from '../avatar';
 import { cn } from '@/lib/utils';
-import { 
-  Check, 
-  CheckCheck, 
-  FileIcon, 
-  Download, 
+import {
+  Check,
+  CheckCheck,
+  FileIcon,
+  Download,
   Smile,
   Star,
   Sparkles,
   Terminal,
-  Activity
+  Activity,
+  Reply,
+  Forward,
+  Copy
 } from 'lucide-react';
 
 interface Message {
@@ -37,16 +40,34 @@ interface MessageProps {
   };
   onReaction?: (emoji: string) => void;
   onPin?: () => void;
+  onReply?: () => void;
+  isReplying?: boolean;
+  onForward?: () => void;
 }
 
-export const Message: React.FC<MessageProps> = ({ message, currentUser, onReaction, onPin }) => {
+export const Message: React.FC<MessageProps> = ({ message, currentUser, onReaction, onPin, onReply, isReplying, onForward }) => {
   const isSelf = message.senderId === currentUser.id;
   const [showReactions, setShowReactions] = useState(false);
 
   const reactions = ['👍', '❤️', '😂', '😮', '😢', '😡'];
-  const isAI = (message.senderName || '').toLowerCase().includes('agent') || 
-               (message.senderName || '').toLowerCase().includes('ai') || 
+  const isAI = (message.senderName || '').toLowerCase().includes('agent') ||
+               (message.senderName || '').toLowerCase().includes('ai') ||
                message.senderName === 'General';
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = message.content;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+    }
+  }, [message.content]);
 
   return (
     <div className={cn(
@@ -66,7 +87,7 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
         </Avatar>
         <div className={cn("h-full w-[1px] bg-border/30 grow")} />
       </div>
-      
+
       <div className={cn(
         "flex max-w-[85%] flex-col gap-2",
         isSelf ? "items-end" : "items-start"
@@ -85,7 +106,13 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
                )}
              </>
            )}
-           <span className="text-[8px] text-muted-foreground uppercase tracking-widest ml-auto opacity-50">
+           <span
+             className="text-[8px] text-muted-foreground uppercase tracking-widest ml-auto opacity-50"
+             title={new Date(message.timestamp).toLocaleString([], {
+               year: 'numeric', month: 'long', day: 'numeric',
+               hour: '2-digit', minute: '2-digit', second: '2-digit'
+             })}
+           >
              {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
            </span>
         </div>
@@ -99,20 +126,21 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
               : cn(
                   "bg-muted/30 border-border text-foreground hover:border-primary/40 focus-within:border-primary/40",
                   isAI && "border-primary/20 bg-primary/5"
-                )
+                ),
+            isReplying && "border-l-primary border-l-4"
           )}>
             {/* Action Buttons for Node */}
             <div className={cn(
               "absolute -top-3 flex gap-1 opacity-0 group-hover/bubble:opacity-100 transition-opacity z-10",
               isSelf ? "right-2" : "left-2"
             )}>
-              <button 
+              <button
                 onClick={() => setShowReactions(!showReactions)}
                 className="h-6 px-1.5 bg-background border border-border text-foreground hover:border-primary transition-colors flex items-center gap-1"
               >
                 <Smile size={10} />
               </button>
-              <button 
+              <button
                 onClick={onPin}
                 className={cn(
                   "h-6 px-1.5 bg-background border transition-colors flex items-center gap-1",
@@ -120,6 +148,24 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
                 )}
               >
                 <Star size={10} className={cn(message.isPinned && "fill-primary")} />
+              </button>
+              <button
+                onClick={() => onReply?.()}
+                className="h-6 px-1.5 bg-background border border-border text-foreground hover:border-primary transition-colors flex items-center gap-1"
+              >
+                <Reply size={10} />
+              </button>
+              <button
+                onClick={() => onForward?.()}
+                className="h-6 px-1.5 bg-background border border-border text-foreground hover:border-primary transition-colors flex items-center gap-1"
+              >
+                <Forward size={10} />
+              </button>
+              <button
+                onClick={handleCopy}
+                className="h-6 px-1.5 bg-background border border-border text-foreground hover:border-primary transition-colors flex items-center gap-1"
+              >
+                <Copy size={10} />
               </button>
             </div>
 
@@ -150,7 +196,7 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
                 {message.content}
               </p>
             )}
-            
+
             {/* Status Line */}
             <div className={cn(
               "flex items-center gap-2 mt-3 opacity-40",
@@ -189,7 +235,7 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
                 ))}
               </div>
             )}
-            
+
             {/* Display Subscript Reactions */}
             {message.reactions && message.reactions.length > 0 && (
               <div className="absolute -bottom-3 right-2 flex gap-1 z-10">
