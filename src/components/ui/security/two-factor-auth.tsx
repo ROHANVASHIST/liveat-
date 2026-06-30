@@ -17,7 +17,6 @@ import {
   Lock,
   AlertTriangle,
   Download,
-  Backup,
   Trash2,
   Clock,
   RefreshCw as DeviceRefresh,

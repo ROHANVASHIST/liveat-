@@ -9,13 +9,6 @@ import {
   Search,
   Archive,
   Pin,
-  Mute,
-  Delete,
-  Wallpaper,
-  DataUsage,
-  Notification,
-  Security,
-  Fingerprint,
   Lock,
   Star,
   Clock,
@@ -27,7 +20,6 @@ import {
   Share2,
   ChevronRight,
   Settings,
-  Help,
   Info,
   Users,
   Globe,
@@ -158,7 +150,7 @@ export const ChatInfoPanel: React.FC<ChatInfoPanelProps> = ({
                   onClick={onToggleMute}
                   className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-secondary transition-colors"
                 >
-                  <Mute className={cn("w-5 h-5", settings?.isMuted && "text-primary")} />
+                  <svg className={cn("w-5 h-5", settings?.isMuted && "text-primary")} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
                   <span className="text-xs">{settings?.isMuted ? 'Unmute' : 'Mute'}</span>
                 </button>
               )}
@@ -311,7 +303,7 @@ export const ChatInfoPanel: React.FC<ChatInfoPanelProps> = ({
                   onClick={onSetWallpaper}
                   className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-secondary transition-colors"
                 >
-                  <Wallpaper className="w-5 h-5 text-muted-foreground" />
+                  <svg className="w-5 h-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
                   <span className="text-sm">Chat wallpaper</span>
                 </button>
               )}
@@ -321,8 +313,8 @@ export const ChatInfoPanel: React.FC<ChatInfoPanelProps> = ({
                   onClick={onToggleMute}
                   className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-secondary transition-colors"
                 >
-                  <Notification className="w-5 h-5 text-muted-foreground" />
-                  <span className="text-sm">
+                  <svg className="w-5 h-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                  <span>
                     {settings?.isMuted ? 'Unmute notifications' : 'Mute notifications'}
                   </span>
                 </button>
@@ -342,7 +334,7 @@ export const ChatInfoPanel: React.FC<ChatInfoPanelProps> = ({
                 <Lock className="w-5 h-5 text-muted-foreground" />
                 <span className="text-sm flex-1">Encryption</span>
                 <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Fingerprint className="w-3 h-3" />
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M12 2a10 10 0 0 1 10 10c0 2.7-1.1 5.2-2.8 7"/><path d="M2 12a10 10 0 0 1 10-10"/><path d="M7 12a5 5 0 0 1 5-5"/><path d="M12 17a5 5 0 0 1-5-5"/></svg>
                   End-to-end
                 </span>
               </button>
@@ -528,7 +520,7 @@ export const StorageUsage: React.FC<StorageUsageProps> = ({
       <DialogContent className="sm:max-w-[450px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <DataUsage className="w-5 h-5" />
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
             Storage and data
           </DialogTitle>
         </DialogHeader>

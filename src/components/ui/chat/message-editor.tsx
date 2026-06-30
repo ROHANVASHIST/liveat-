@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '../button';
 import { Input } from '../input';
-import { X, Save, Clock, Calendar, AlertTriangle } from 'lucide-react';
+import { X, Save, Clock, Calendar, AlertTriangle, Trash2, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface MessageEditProps {

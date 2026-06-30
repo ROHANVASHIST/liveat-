@@ -44,6 +44,9 @@ interface ChatListProps {
   onOpenProfile: () => void;
   onCreateRoom?: () => void;
   typingUsers?: string[];
+  roomUnreadCounts?: Record<string, number>;
+  onStatusClick?: (userId: string) => void;
+  statusUsers?: string[];
 }
 
 const getRelativeTime = (date: Date): string => {
@@ -71,20 +74,15 @@ export const ChatList: React.FC<ChatListProps> = ({
   onOpenProfile,
   onCreateRoom,
   typingUsers = [],
+  roomUnreadCounts = {},
+  onStatusClick,
+  statusUsers = [],
 }) => {
   const [activeNav, setActiveNav] = useState('messages');
   const [sidebarSection, setSidebarSection] = useState<'rooms' | 'contacts'>('rooms');
   const [searchQuery, setSearchQuery] = useState('');
   const currentUserData = users.find(u => u.id === currentUserId);
   const onlineCount = users.filter(u => u.status === 'online').length;
-
-  const roomUnread = useMemo(() => {
-    const map: Record<string, number> = {};
-    rooms.forEach(room => {
-      map[room.id] = Math.floor(Math.random() * 5);
-    });
-    return map;
-  }, [rooms]);
 
   const mainNav = [
     { id: 'messages', label: 'Chat', icon: MessageSquare },
@@ -198,7 +196,7 @@ export const ChatList: React.FC<ChatListProps> = ({
                 </div>
               ) : (
                 filteredRooms.map(room => {
-                  const unread = roomUnread[room.id];
+                  const unread = roomUnreadCounts[room.id] || 0;
                   return (
                     <button 
                       key={room.id} 
@@ -243,40 +241,46 @@ export const ChatList: React.FC<ChatListProps> = ({
                       )}
                       onClick={() => onSelectUser(user.id)}
                     >
-                       <div className="relative shrink-0">
-                          <Avatar className={cn(
-                            "h-7 w-7 border rounded-none overflow-hidden",
-                            activeChatUserId === user.id ? "border-primary" : "border-border"
-                          )}>
-                             <AvatarImage src={user.avatar} className="object-cover" />
-                             <AvatarFallback className="text-[8px] bg-muted rounded-none">{user.name ? user.name[0] : 'U'}</AvatarFallback>
-                          </Avatar>
-                          <span className={cn(
-                            "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card",
-                            user.status === 'online' ? "status-online" : user.status === 'away' ? "status-away" : "status-offline"
-                          )} />
-                       </div>
-                       <div className="flex-1 min-w-0 text-left">
-                         <span className="block truncate">{user.name}</span>
-                         {typingUsers.includes(user.id) ? (
-                           <span className="flex items-center gap-1 mt-0.5">
-                             <span className="text-[8px] text-primary italic normal-case tracking-normal">typing</span>
-                             <span className="typing-dot" />
-                             <span className="typing-dot" />
-                             <span className="typing-dot" />
-                           </span>
-                         ) : user.lastMessage ? (
-                           <span className="block text-[8px] text-muted-foreground truncate mt-0.5 normal-case tracking-normal">{user.lastMessage}</span>
-                         ) : null}
-                       </div>
-                       {!typingUsers.includes(user.id) && user.lastMessageTime ? (
-                         <span className="flex items-center gap-1 shrink-0">
-                           <Clock size={8} className="text-muted-foreground/50" />
-                           <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">{getRelativeTime(user.lastMessageTime)}</span>
-                         </span>
-                       ) : user.status === 'online' && !typingUsers.includes(user.id) ? (
-                         <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">Online</span>
-                       ) : null}
+                       <div
+                         className="relative shrink-0 cursor-pointer"
+                         onClick={(e) => { e.stopPropagation(); onStatusClick?.(user.id); }}
+                       >
+                           <div className={cn(
+                             "h-7 w-7 rounded-full overflow-hidden",
+                             "border-2",
+                             statusUsers.includes(user.id) ? "border-primary" : "border-border"
+                           )}>
+                             <Avatar className="h-full w-full rounded-none">
+                               <AvatarImage src={user.avatar} className="object-cover" />
+                               <AvatarFallback className="text-[8px] bg-muted rounded-none">{user.name ? user.name[0] : 'U'}</AvatarFallback>
+                             </Avatar>
+                           </div>
+                           <span className={cn(
+                             "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card",
+                             user.status === 'online' ? "status-online" : user.status === 'away' ? "status-away" : "status-offline"
+                           )} />
+                        </div>
+                        <div className="flex-1 min-w-0 text-left">
+                          <span className="block truncate">{user.name}</span>
+                          {typingUsers.includes(user.id) ? (
+                            <span className="flex items-center gap-1 mt-0.5">
+                              <span className="text-[8px] text-primary italic normal-case tracking-normal">typing</span>
+                              <span className="typing-dot" />
+                              <span className="typing-dot" />
+                              <span className="typing-dot" />
+                            </span>
+                          ) : user.lastMessage ? (
+                            <span className="block text-[8px] text-muted-foreground truncate mt-0.5 normal-case tracking-normal">{user.lastMessage}</span>
+                          ) : null}
+                        </div>
+                        {!typingUsers.includes(user.id) && user.lastMessageTime ? (
+                          <span className="flex items-center gap-1 shrink-0">
+                            <Clock size={8} className="text-muted-foreground/50" />
+                            <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">{getRelativeTime(user.lastMessageTime)}</span>
+                          </span>
+                        ) : user.status === 'online' && !typingUsers.includes(user.id) ? (
+                          <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">Online</span>
+                        ) : null}
                     </button>
                   ))}
                   {onlineUsers.length > 0 && offlineUsers.length > 0 && (
@@ -297,40 +301,46 @@ export const ChatList: React.FC<ChatListProps> = ({
                       )}
                       onClick={() => onSelectUser(user.id)}
                     >
-                       <div className="relative shrink-0">
-                          <Avatar className={cn(
-                            "h-7 w-7 border rounded-none overflow-hidden",
-                            activeChatUserId === user.id ? "border-primary" : "border-border"
-                          )}>
-                             <AvatarImage src={user.avatar} className="object-cover" />
-                             <AvatarFallback className="text-[8px] bg-muted rounded-none">{user.name ? user.name[0] : 'U'}</AvatarFallback>
-                          </Avatar>
-                          <span className={cn(
-                            "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card",
-                            user.status === 'online' ? "status-online" : user.status === 'away' ? "status-away" : "status-offline"
-                          )} />
-                       </div>
-                       <div className="flex-1 min-w-0 text-left">
-                         <span className="block truncate">{user.name}</span>
-                         {typingUsers.includes(user.id) ? (
-                           <span className="flex items-center gap-1 mt-0.5">
-                             <span className="text-[8px] text-primary italic normal-case tracking-normal">typing</span>
-                             <span className="typing-dot" />
-                             <span className="typing-dot" />
-                             <span className="typing-dot" />
-                           </span>
-                         ) : user.lastMessage ? (
-                           <span className="block text-[8px] text-muted-foreground truncate mt-0.5 normal-case tracking-normal">{user.lastMessage}</span>
-                         ) : null}
-                       </div>
-                       {!typingUsers.includes(user.id) && user.lastMessageTime ? (
-                         <span className="flex items-center gap-1 shrink-0">
-                           <Clock size={8} className="text-muted-foreground/50" />
-                           <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">{getRelativeTime(user.lastMessageTime)}</span>
-                         </span>
-                       ) : user.status === 'online' && !typingUsers.includes(user.id) ? (
-                         <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">Online</span>
-                       ) : null}
+                       <div
+                         className="relative shrink-0 cursor-pointer"
+                         onClick={(e) => { e.stopPropagation(); onStatusClick?.(user.id); }}
+                       >
+                           <div className={cn(
+                             "h-7 w-7 rounded-full overflow-hidden",
+                             "border-2",
+                             statusUsers.includes(user.id) ? "border-primary" : "border-border"
+                           )}>
+                             <Avatar className="h-full w-full rounded-none">
+                               <AvatarImage src={user.avatar} className="object-cover" />
+                               <AvatarFallback className="text-[8px] bg-muted rounded-none">{user.name ? user.name[0] : 'U'}</AvatarFallback>
+                             </Avatar>
+                           </div>
+                           <span className={cn(
+                             "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card",
+                             user.status === 'online' ? "status-online" : user.status === 'away' ? "status-away" : "status-offline"
+                           )} />
+                        </div>
+                        <div className="flex-1 min-w-0 text-left">
+                          <span className="block truncate">{user.name}</span>
+                          {typingUsers.includes(user.id) ? (
+                            <span className="flex items-center gap-1 mt-0.5">
+                              <span className="text-[8px] text-primary italic normal-case tracking-normal">typing</span>
+                              <span className="typing-dot" />
+                              <span className="typing-dot" />
+                              <span className="typing-dot" />
+                            </span>
+                          ) : user.lastMessage ? (
+                            <span className="block text-[8px] text-muted-foreground truncate mt-0.5 normal-case tracking-normal">{user.lastMessage}</span>
+                          ) : null}
+                        </div>
+                        {!typingUsers.includes(user.id) && user.lastMessageTime ? (
+                          <span className="flex items-center gap-1 shrink-0">
+                            <Clock size={8} className="text-muted-foreground/50" />
+                            <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">{getRelativeTime(user.lastMessageTime)}</span>
+                          </span>
+                        ) : user.status === 'online' && !typingUsers.includes(user.id) ? (
+                          <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">Online</span>
+                        ) : null}
                     </button>
                   ))}
                 </>

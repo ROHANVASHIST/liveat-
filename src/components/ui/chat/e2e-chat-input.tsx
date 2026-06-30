@@ -10,7 +10,6 @@ import {
   X,
   Play,
   Pause,
-  Waveform,
   MapPin,
   FileAudio,
   StopCircle
@@ -45,7 +44,7 @@ export const E2EChatInput: React.FC<E2EChatInputProps> = ({
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [showLocationPicker, setShowLocationPicker] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
@@ -282,7 +281,7 @@ export const E2EChatInput: React.FC<E2EChatInputProps> = ({
           
           <div className="flex-1">
             <div className="flex items-center gap-2 text-sm">
-              <Waveform className="w-4 h-4 text-primary" />
+              <svg className="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><polyline points="1 15 5 9 9 14 13 5 17 12 21 9 23 12"/></svg>
               <span className="font-mono">
                 {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
               </span>

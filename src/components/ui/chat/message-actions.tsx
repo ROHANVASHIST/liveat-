@@ -16,8 +16,12 @@ import {
   ReplyAll,
   Shield,
   AlertTriangle,
+  Search,
+  Check,
 } from 'lucide-react';
 import { Button } from '../button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../dialog';
+import { ScrollArea } from '../scroll-area';
 import { cn } from '@/lib/utils';
 
 interface MessageAction {

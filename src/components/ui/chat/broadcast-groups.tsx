@@ -20,6 +20,7 @@ import {
   Volume2,
   Mic,
   Image,
+  MessageSquare,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 

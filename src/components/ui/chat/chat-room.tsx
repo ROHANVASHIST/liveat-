@@ -1,5 +1,4 @@
 import React from 'react';
-import { Button } from '../button';
 import { ChatHeader } from './chat-header';
 import { ChatContainer } from './chat-container';
 import { ChatInput } from './chat-input';
@@ -8,28 +7,19 @@ import { cn } from '@/lib/utils';
 import {
   Info,
   Users,
-  Tag,
   MoreHorizontal,
   ChevronRight,
-  Shield,
-  Clock,
   Layout,
   Search,
   Star as StarIcon,
   MessageSquare,
   Sparkles,
   X,
-  Bell,
-  BellOff,
-  Lock,
-  Globe,
-  Trash2,
   Image,
   FileText,
   Pin,
 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '../avatar';
-import { Badge } from '../badge';
 
 interface Message {
   id: string;
@@ -43,9 +33,25 @@ interface Message {
   mediaUrl?: string;
   status?: 'sent' | 'delivered' | 'read';
   isPinned?: boolean;
+  reactions?: { emoji: string; userId: string; userName?: string }[];
+  isEdited?: boolean;
+  isForwarded?: boolean;
+  replyTo?: {
+    id: string;
+    content: string;
+    senderName: string;
+    type?: string;
+  };
+  caption?: string;
 }
 
 interface ChatPartner {
+  id: string;
+  name: string;
+  avatar?: string;
+}
+
+interface MentionUser {
   id: string;
   name: string;
   avatar?: string;
@@ -83,6 +89,12 @@ interface ChatRoomProps {
   replyTo?: { id: string; senderName: string; content: string } | null;
   onCancelReply?: () => void;
   onEmojiSelect?: (emoji: string) => void;
+  onVoiceCall?: () => void;
+  onVideoCall?: () => void;
+  onViewStatus?: () => void;
+  hasStatus?: boolean;
+  users?: MentionUser[];
+  wallpaper?: string;
 }
 
 export const ChatRoom: React.FC<ChatRoomProps> = ({
@@ -113,6 +125,12 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
   replyTo,
   onCancelReply,
   onEmojiSelect,
+  onVoiceCall,
+  onVideoCall,
+  onViewStatus,
+  hasStatus,
+  users = [],
+  wallpaper,
 }) => {
   const [isMuted, setIsMuted] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -133,6 +151,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
     const a = document.createElement('a');
     a.href = url;
     a.download = `transcript-${roomName}-${new Date().toISOString().split('T')[0]}.txt`;
+    a.click();
     URL.revokeObjectURL(url);
   };
 
@@ -208,6 +227,12 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
     scrollToBottom();
   }, [messages]);
 
+  const chatBgStyle = wallpaper ? {
+    backgroundImage: `url(${wallpaper})`,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+  } : {};
+
   return (
     <div className={cn("flex flex-col h-screen bg-background overflow-hidden font-mono", className)}>
       <ChatHeader
@@ -220,6 +245,15 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
         sentiment={sentiment}
         onSummarize={onSummarize}
         isSummarizing={isSummarizing}
+        onClearHistory={onClearHistory}
+        onExport={handleExport}
+        showInfo={showInfoPanel}
+        onInfoToggle={() => setShowInfoPanel(prev => !prev)}
+        onSearchToggle={() => setShowSearch(prev => !prev)}
+        onVoiceCall={onVoiceCall}
+        onVideoCall={onVideoCall}
+        onViewStatus={onViewStatus}
+        hasStatus={hasStatus}
       />
 
       {/* Pinned Messages Bar */}
@@ -247,7 +281,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
         </div>
       )}
 
-      {/* Search Bar - Toggleable with Ctrl+F */}
+      {/* Search Bar */}
       {showSearch && (
         <div className="px-6 py-3 border-b border-border bg-muted/20 backdrop-blur-md flex items-center gap-3">
           <div className="relative flex-1 group">
@@ -333,12 +367,16 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
 
       <div className="flex-1 relative flex overflow-hidden">
         {/* Main Conversation */}
-        <div className="flex-1 flex flex-col min-w-0 bg-background/50 relative">
-          <div className="scan-line opacity-20" />
+        <div
+          className="flex-1 flex flex-col min-w-0 relative"
+          style={chatBgStyle}
+        >
+          {!wallpaper && <div className="scan-line opacity-20" />}
+          {wallpaper && <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" />}
 
           {/* Reply-to Indicator */}
           {replyTo && (
-            <div className="px-6 py-2 border-b border-primary/20 bg-primary/5 flex items-center gap-3">
+            <div className="px-6 py-2 border-b border-primary/20 bg-primary/5 flex items-center gap-3 relative z-10">
               <div className="h-8 w-[2px] bg-primary/40 rounded-full" />
               <div className="flex-1 min-w-0">
                 <span className="text-[9px] uppercase tracking-wider text-primary font-bold">
@@ -441,6 +479,9 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
             onPolish={onPolish}
             isPolishing={isPolishing}
             onEmojiSelect={onEmojiSelect}
+            replyTo={replyTo ? { id: replyTo.id, senderId: '', senderName: replyTo.senderName, content: replyTo.content } : null}
+            onCancelReply={onCancelReply}
+            users={users}
           />
         </div>
 
@@ -537,3 +578,33 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
     </div>
   );
 };
+
+const BellOff = ({ size, className }: { size?: number; className?: string }) => (
+  <svg width={size || 16} height={size || 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+    <path d="M13.73 21a2 2 0 0 1-3.46 0" /><path d="M18.63 13A17.89 17.89 0 0 1 18 8" /><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14" /><path d="M18 8a6 6 0 0 0-9.33-5" /><path d="m1 1 22 22" />
+  </svg>
+);
+
+const Bell = ({ size, className }: { size?: number; className?: string }) => (
+  <svg width={size || 16} height={size || 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+    <path d="M6 8a6 6 0 0 1 12 0c0 7 4 9 4 9H2s4-2 4-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" />
+  </svg>
+);
+
+const Lock = ({ size, className }: { size?: number; className?: string }) => (
+  <svg width={size || 16} height={size || 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+    <rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+  </svg>
+);
+
+const Globe = ({ size, className }: { size?: number; className?: string }) => (
+  <svg width={size || 16} height={size || 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+    <circle cx="12" cy="12" r="10" /><line x1="2" x2="22" y1="12" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+  </svg>
+);
+
+const Trash2 = ({ size, className }: { size?: number; className?: string }) => (
+  <svg width={size || 16} height={size || 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+    <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+  </svg>
+);

@@ -1,7 +1,7 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
-import { 
-  Settings, 
+import {
+  Settings,
   Sparkles,
   Activity,
   Menu,
@@ -11,7 +11,8 @@ import {
   Trash2,
   Download,
   Info,
-  PanelRightOpen
+  PanelRightOpen,
+  Circle
 } from 'lucide-react';
 
 interface ChatHeaderProps {
@@ -30,6 +31,10 @@ interface ChatHeaderProps {
   showInfo?: boolean;
   onInfoToggle?: () => void;
   onSearchToggle?: () => void;
+  onVoiceCall?: () => void;
+  onVideoCall?: () => void;
+  onViewStatus?: () => void;
+  hasStatus?: boolean;
 }
 
 export const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -47,6 +52,10 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   showInfo,
   onInfoToggle,
   onSearchToggle,
+  onVoiceCall,
+  onVideoCall,
+  onViewStatus,
+  hasStatus,
 }) => {
   const [showMenu, setShowMenu] = React.useState(false);
 
@@ -61,12 +70,27 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
     <header className="flex items-center justify-between px-4 md:px-6 h-16 border-b border-border bg-background/80 backdrop-blur-md z-40 relative font-mono">
       <div className="flex items-center gap-3 min-w-0">
         {/* Mobile sidebar toggle */}
-        <button 
-          onClick={onToggleSidebar} 
+        <button
+          onClick={onToggleSidebar}
           className="lg:hidden h-9 w-9 border border-border flex items-center justify-center hover:bg-muted transition-colors shrink-0"
         >
           <Menu size={16} />
         </button>
+
+        {/* Status ring avatar */}
+        <div className="relative shrink-0 cursor-pointer" onClick={onViewStatus}>
+          <div className={cn(
+            "h-9 w-9 border-2 flex items-center justify-center overflow-hidden rounded-full",
+            hasStatus ? "border-primary" : "border-border"
+          )}>
+            <span className="text-sm font-bold text-foreground">
+              {title ? title.charAt(0).toUpperCase() : '?'}
+            </span>
+          </div>
+          {hasStatus && (
+            <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-primary border-2 border-background" />
+          )}
+        </div>
 
         <div className="flex flex-col min-w-0">
           <div className="flex items-center gap-2">
@@ -80,7 +104,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           {typingUserNames.length > 0 ? (
             <div className="flex items-center gap-1.5 mt-0.5">
               <span className="text-[9px] text-primary italic normal-case tracking-normal">
-                {typingUserNames.length === 1 
+                {typingUserNames.length === 1
                   ? `${typingUserNames[0]} is typing`
                   : `${typingUserNames.length} people typing`
                 }
@@ -102,10 +126,30 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
+         {/* Voice/Video Call Buttons */}
+         {onVoiceCall && (
+           <button
+             onClick={onVoiceCall}
+             className="h-9 w-9 border border-border flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground hover:text-emerald-500"
+             title="Voice call"
+           >
+             <Phone size={14} />
+           </button>
+         )}
+         {onVideoCall && (
+           <button
+             onClick={onVideoCall}
+             className="h-9 w-9 border border-border flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground hover:text-primary"
+             title="Video call"
+           >
+             <Video size={14} />
+           </button>
+         )}
+
          {onSummarize && (
-            <button 
-              onClick={onSummarize} 
-              disabled={isSummarizing} 
+            <button
+              onClick={onSummarize}
+              disabled={isSummarizing}
               className={cn(
                 "h-9 px-3 border transition-all flex items-center gap-2 text-[9px] uppercase tracking-widest",
                 isSummarizing ? "bg-muted border-border opacity-50" : "bg-primary/5 border-primary/20 text-primary hover:bg-primary/10"
@@ -116,12 +160,12 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                <span className="hidden md:inline">{isSummarizing ? "Analyzing..." : "Summarize"}</span>
             </button>
          )}
-         
+
          <div className="w-[1px] h-5 bg-border mx-0.5 hidden sm:block" />
 
          {/* Info toggle button */}
          {onInfoToggle && (
-           <button 
+           <button
              onClick={onInfoToggle}
              className={cn(
                "h-9 w-9 border flex items-center justify-center transition-colors",
@@ -137,7 +181,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
 
          {/* Search toggle button */}
          {onSearchToggle && (
-           <button 
+           <button
              onClick={onSearchToggle}
              className="h-9 w-9 border border-border flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
              title="Search messages"
@@ -145,10 +189,10 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
              <PanelRightOpen size={14} />
            </button>
          )}
-         
+
          {/* More Menu */}
          <div className="relative">
-           <button 
+           <button
              onClick={() => setShowMenu(!showMenu)}
              className="h-9 w-9 border border-border flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
            >
@@ -159,7 +203,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
                <div className="absolute right-0 top-full mt-1 w-48 bg-background border border-border shadow-lg z-50">
                  {onExport && (
-                   <button 
+                   <button
                      onClick={() => { onExport(); setShowMenu(false); }}
                      className="w-full flex items-center gap-3 px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-all"
                    >
@@ -167,7 +211,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                    </button>
                  )}
                  {onClearHistory && (
-                   <button 
+                   <button
                      onClick={() => { onClearHistory(); setShowMenu(false); }}
                      className="w-full flex items-center gap-3 px-4 py-2.5 text-[10px] uppercase tracking-widest text-red-400 hover:bg-red-500/10 transition-all"
                    >
@@ -175,7 +219,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                    </button>
                  )}
                  {onSettings && (
-                   <button 
+                   <button
                      onClick={() => { onSettings(); setShowMenu(false); }}
                      className="w-full flex items-center gap-3 px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-all"
                    >
