@@ -10,33 +10,11 @@ export default defineConfig({
     },
   },
   server: {
-    host: true,
-    port: 5173,
-    strictPort: true,
+    port: 5174,
     proxy: {
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
-      },
-    },
-  },
-  build: {
-    // Code minification & security hardening
-    minify: 'esbuild',
-    sourcemap: false,  // Disable sourcemaps in production
-    target: 'es2020',
-    cssCodeSplit: true,
-    chunkSizeWarningLimit: 500,
-    rollupOptions: {
-      input: {
-        main: path.resolve(__dirname, 'index.html'),
-      },
-      output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-          encryption: ['crypto-js'],
-          ui: ['framer-motion', 'lucide-react'],
-        },
       },
     },
   },
