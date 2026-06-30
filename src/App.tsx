@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { ChatWelcome, ChatRoom, ChatList, UserProfile, AnalyticsDashboard, InstallPrompt, CommandPalette } from './components/ui';
 import { Button } from './components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './components/ui/dialog';
@@ -11,6 +11,8 @@ import { cn } from './lib/utils';
 import { Avatar, AvatarFallback, AvatarImage } from './components/ui/avatar';
 import { polishText, summarizeChat, generateAIResponse } from './lib/ai';
 import { encryptMessage, decryptMessage } from './lib/encryption';
+import { CallUI, useCallTimer } from './components/ui/chat/call-ui';
+import { StatusViewer } from './components/ui/chat/status-viewer';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -34,6 +36,10 @@ interface Message {
   status?: 'sent' | 'delivered' | 'read';
   isPinned?: boolean;
   reactions?: { emoji: string; userId: string; userName?: string }[];
+  isEdited?: boolean;
+  isForwarded?: boolean;
+  replyTo?: { id: string; content: string; senderName: string; type?: string };
+  caption?: string;
 }
 
 interface ChatUser {
@@ -89,10 +95,37 @@ function App() {
   const [theme, setTheme] = useState<'black' | 'light'>(() => (localStorage.getItem('concierge-theme') as 'black' | 'light') || 'black');
   const [replyToMsg, setReplyToMsg] = useState<Message | null>(null);
 
+  // Call state
+  const [isCallOpen, setIsCallOpen] = useState(false);
+  const [isVideoCall, setIsVideoCall] = useState(false);
+  const [callDirection, setCallDirection] = useState<'outgoing' | 'incoming'>('outgoing');
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoEnabled, setIsVideoEnabled] = useState(true);
+  const [isSpeakerOn, setIsSpeakerOn] = useState(false);
+  const [isCallMinimized, setIsCallMinimized] = useState(false);
+  const callTimer = useCallTimer();
+
+  // Status/stories state
+  const [isStatusViewerOpen, setIsStatusViewerOpen] = useState(false);
+  const [statuses, setStatuses] = useState<any[]>([]);
+  const [statusInitialIndex, setStatusInitialIndex] = useState(0);
+
+  // Unread count state
+  const [roomUnreadCounts, setRoomUnreadCounts] = useState<Record<string, number>>({});
+  const [chatWallpaper, setChatWallpaper] = useState<string | null>(() => localStorage.getItem('chat-wallpaper'));
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('concierge-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (chatWallpaper) {
+      localStorage.setItem('chat-wallpaper', chatWallpaper);
+    } else {
+      localStorage.removeItem('chat-wallpaper');
+    }
+  }, [chatWallpaper]);
 
 
   useEffect(() => {
@@ -295,6 +328,13 @@ function App() {
             type: data.msgType as 'text' | 'image' | 'file',
             mediaUrl: data.mediaUrl,
           }]);
+          // Track unread counts for non-self messages in non-active rooms
+          if (data.senderId !== (currentUserId || currentUser) && data.roomId !== activeRoomId) {
+            setRoomUnreadCounts(prev => ({
+              ...prev,
+              [data.roomId || 'unknown']: (prev[data.roomId || 'unknown'] || 0) + 1,
+            }));
+          }
           break;
         case 'message_history':
           setMessages(data.messages.map((msg: any) => ({
@@ -528,6 +568,75 @@ function App() {
     }));
   };
 
+  // Call handlers
+  const handleStartCall = (video: boolean) => {
+    setIsVideoCall(video);
+    setCallDirection('outgoing');
+    setIsCallOpen(true);
+    setIsMuted(false);
+    setIsVideoEnabled(true);
+    setIsSpeakerOn(false);
+    setIsCallMinimized(false);
+    callTimer.start();
+  };
+
+  const handleAcceptCall = () => {
+    callTimer.start();
+  };
+
+  const handleEndCall = () => {
+    setIsCallOpen(false);
+    callTimer.stop();
+    setIsCallMinimized(false);
+  };
+
+  const handleToggleMute = () => setIsMuted(m => !m);
+  const handleToggleVideo = () => setIsVideoEnabled(v => !v);
+  const handleToggleSpeaker = () => setIsSpeakerOn(s => !s);
+
+  // Status handlers
+  const handleViewStatus = () => {
+    const userStatuses = statuses.filter(s => s.userId === (activeChatUserId || activeRoomId));
+    if (userStatuses.length > 0) {
+      setStatusInitialIndex(0);
+      setIsStatusViewerOpen(true);
+    }
+  };
+
+  const handleCreateStatus = async (data: { content: string; mediaUrl?: string; type: 'text' | 'image' }) => {
+    const newStatus = {
+      id: Date.now().toString(),
+      userId: currentUserId || currentUser,
+      userName: currentUser,
+      userAvatar: currentUserAvatar,
+      content: data.content,
+      mediaUrl: data.mediaUrl,
+      type: data.type,
+      timestamp: new Date(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      viewed: false,
+      viewers: [],
+    };
+    setStatuses(prev => [...prev, newStatus]);
+    try {
+      await fetch(`${API_BASE_URL}/api/status`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newStatus),
+      });
+    } catch {}
+  };
+
+  const handleMarkStatusViewed = (statusId: string) => {
+    setStatuses(prev => prev.map(s =>
+      s.id === statusId ? { ...s, viewed: true, viewers: [...(s.viewers || []), { userId: currentUserId, userName: currentUser, viewedAt: new Date() }] } : s
+    ));
+  };
+
+  const activeChatUser = users.find(u => u.id === activeChatUserId);
+  const activeUserHasStatus = activeChatUserId ? statuses.some(s => s.userId === activeChatUserId) : false;
+
   const handlePinMessage = (messageId: string) => {
     setMessages(prev => prev.map(m => 
       m.id === messageId ? { ...m, isPinned: !m.isPinned } : m
@@ -629,6 +738,7 @@ function App() {
             setActiveChatUserId(null);
             setIsSidebarOpen(false);
             setActiveNav('messages');
+            setRoomUnreadCounts(prev => ({ ...prev, [id]: 0 }));
           }}
           onSelectUser={(id) => {
             setActiveChatUserId(id);
@@ -639,6 +749,15 @@ function App() {
           onSelectNav={setActiveNav}
           onOpenProfile={() => setActiveNav('settings')}
           onCreateRoom={() => setIsCreateRoomOpen(true)}
+          roomUnreadCounts={roomUnreadCounts}
+          onStatusClick={(userId) => {
+            const userStatuses = statuses.filter(s => s.userId === userId);
+            if (userStatuses.length > 0) {
+              setStatusInitialIndex(0);
+              setIsStatusViewerOpen(true);
+            }
+          }}
+          statusUsers={statuses.filter(s => !s.viewed).map(s => s.userId)}
         />
       </div>
 
@@ -671,6 +790,12 @@ function App() {
             replyTo={replyToMsg}
             onCancelReply={handleCancelReply}
             onEmojiSelect={handleEmojiSelect}
+            onVoiceCall={() => handleStartCall(false)}
+            onVideoCall={() => handleStartCall(true)}
+            onViewStatus={handleViewStatus}
+            hasStatus={activeUserHasStatus}
+            users={users.map(u => ({ id: u.id, name: u.name, avatar: u.avatar }))}
+            wallpaper={chatWallpaper || undefined}
           />
         )}
 
@@ -746,6 +871,38 @@ function App() {
         </DialogContent>
       </Dialog>
       
+      {/* Call UI */}
+      <CallUI
+        isOpen={isCallOpen}
+        isVideo={isVideoCall}
+        caller={{ id: currentUserId || currentUser, name: currentUser, avatar: currentUserAvatar }}
+        callee={{ id: activeChatUserId || 'contact', name: activeChatUser?.name || rooms.find(r => r.id === activeRoomId)?.name || 'Contact', avatar: activeChatUser?.avatar }}
+        callDirection={callDirection}
+        onAccept={handleAcceptCall}
+        onReject={handleEndCall}
+        onEnd={handleEndCall}
+        onToggleVideo={handleToggleVideo}
+        onToggleMute={handleToggleMute}
+        onToggleSpeaker={handleToggleSpeaker}
+        isMuted={isMuted}
+        isVideoEnabled={isVideoEnabled}
+        isSpeakerOn={isSpeakerOn}
+        callDuration={callTimer.seconds}
+        onMinimize={() => setIsCallMinimized(!isCallMinimized)}
+        isMinimized={isCallMinimized}
+      />
+
+      {/* Status Viewer */}
+      <StatusViewer
+        isOpen={isStatusViewerOpen}
+        onClose={() => setIsStatusViewerOpen(false)}
+        statuses={statuses.filter(s => s.userId === (activeChatUserId || activeRoomId))}
+        initialIndex={statusInitialIndex}
+        onCreateStatus={handleCreateStatus}
+        markAsViewed={handleMarkStatusViewed}
+        currentUserId={currentUserId || currentUser}
+      />
+
       <InstallPrompt />
       <CommandPalette 
         isOpen={isCommandPaletteOpen} 

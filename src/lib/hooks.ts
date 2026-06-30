@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL 
   ? (import.meta.env.VITE_BACKEND_URL.startsWith('http') ? import.meta.env.VITE_BACKEND_URL : `https://${import.meta.env.VITE_BACKEND_URL}`)
@@ -669,15 +669,17 @@ export const useVoiceMessages = () => {
   }, []);
 
   // Media recorder helper
+  const chunksRef = React.useRef<Blob[]>([]);
+
   const startRecording = useCallback((onDataAvailable: (data: Blob) => void) => {
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then((stream) => {
         const mediaRecorder = new MediaRecorder(stream);
-        const chunks: Blob[] = [];
+        chunksRef.current = [];
 
         mediaRecorder.ondataavailable = (e) => {
           if (e.data.size > 0) {
-            chunks.push(e.data);
+            chunksRef.current.push(e.data);
             onDataAvailable(e.data);
           }
         };
@@ -685,7 +687,7 @@ export const useVoiceMessages = () => {
         mediaRecorder.start();
         setIsRecording(true);
 
-        return { mediaRecorder, chunks, stream };
+        return { mediaRecorder, chunks: chunksRef.current, stream };
       })
       .catch((error) => {
         console.error('Error accessing microphone:', error);
@@ -696,9 +698,10 @@ export const useVoiceMessages = () => {
   const stopRecording = useCallback((mediaRecorder: MediaRecorder, stream: MediaStream) => {
     return new Promise<Blob>((resolve) => {
       mediaRecorder.onstop = () => {
-        const blob = new Blob(mediaRecorder.chunks, { type: 'audio/webm' });
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
         stream.getTracks().forEach((track) => track.stop());
         setIsRecording(false);
+        chunksRef.current = [];
         resolve(blob);
       };
       mediaRecorder.stop();

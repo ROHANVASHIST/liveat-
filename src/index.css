@@ -285,3 +285,59 @@
   transform: translateY(-1px);
   box-shadow: 0 4px 12px hsl(var(--primary) / 0.1);
 }
+
+/* =============================================
+   Status/Stories Progress Animation
+   ============================================= */
+@keyframes status-progress {
+  from { width: 0%; }
+  to { width: 100%; }
+}
+
+.animate-progress {
+  animation: status-progress 5s linear forwards;
+}
+
+/* =============================================
+   Call UI Animations
+   ============================================= */
+@keyframes call-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.05); }
+}
+
+.call-pulse {
+  animation: call-pulse 2s ease-in-out infinite;
+}
+
+/* =============================================
+   Gradient Radial
+   ============================================= */
+.bg-gradient-radial {
+  background: radial-gradient(circle at center, var(--tw-gradient-from), var(--tw-gradient-to));
+}
+
+/* =============================================
+   Line Clamp Utilities
+   ============================================= */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* =============================================
+   Scrollbar Thin
+   ============================================= */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 2px;
+  height: 2px;
+}
+
+/* =============================================
+   Mention Highlight
+   ============================================= */
+.mention-highlight {
+  @apply text-primary font-semibold bg-primary/10 px-0.5;
+}

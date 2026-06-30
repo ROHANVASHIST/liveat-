@@ -1,22 +1,28 @@
 import React from 'react';
 import { Button } from '../button';
 import { cn } from '@/lib/utils';
-import { 
-  SendHorizontal, 
-  Mic, 
+import {
+  SendHorizontal,
+  Mic,
   Plus,
   Wand,
-  Terminal,
-  Activity,
   Smile,
-  X
+  X,
+  AtSign
 } from 'lucide-react';
+import { MentionInput } from './mention-input';
 
 interface Message {
   id: string;
   senderId: string;
   senderName: string;
   content: string;
+}
+
+interface MentionUser {
+  id: string;
+  name: string;
+  avatar?: string;
 }
 
 interface ChatInputProps {
@@ -32,9 +38,10 @@ interface ChatInputProps {
   replyTo?: Message | null;
   onCancelReply?: () => void;
   onEmojiSelect?: (emoji: string) => void;
+  users?: MentionUser[];
 }
 
-const EMOJI_LIST = ['👍', '❤️', '😂', '😮', '😢', '😡', '🎉', '🔥', '✅', '❌', '💯', '👋'];
+const EMOJI_LIST = ['👍', '❤️', '😂', '😮', '😢', '😡', '🎉', '🔥', '✅', '❌', '💯', '👋', '🥳', '😎', '🙏', '💪', '🤝', '✨'];
 
 export const ChatInput: React.FC<ChatInputProps> = ({
   value,
@@ -48,6 +55,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   replyTo,
   onCancelReply,
   onEmojiSelect,
+  users = [],
 }) => {
   const [isRecording, setIsRecording] = React.useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = React.useState(false);
@@ -65,13 +73,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showEmojiPicker]);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      onSend();
-    }
-  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -149,23 +150,18 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           </div>
 
           <div className="flex-1 min-w-0 pb-1.5">
-            <textarea
+            <MentionInput
               value={value}
-              onChange={(e) => onChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={isRecording ? "ANALYZING_VOICE..." : "CMD >_"}
-              rows={1}
+              onChange={onChange}
+              onSend={onSend}
+              users={users}
+              placeholder={isRecording ? "ANALYZING_VOICE..." : "CMD >_  (@ to mention)"}
               disabled={disabled || isLoading}
-              className={cn(
-                "w-full bg-transparent border-none focus:ring-0 resize-none py-2 text-[13px] tracking-widest max-h-48 min-h-[40px] transition-all outline-none",
-                isRecording ? "text-primary animate-pulse" : "text-foreground placeholder:text-muted-foreground/30"
-              )}
-              style={{ height: 'auto' }}
             />
           </div>
 
           <div className="flex items-center gap-1.5 pb-1">
-              <button 
+              <button
                 onClick={startSpeechRecognition}
                 className={cn(
                   "h-10 w-10 flex items-center justify-center transition-all border",
@@ -175,7 +171,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 <Mic size={16} className={cn(isRecording && "animate-pulse")} />
               </button>
               {onPolish && (
-                <button 
+                <button
                   onClick={onPolish}
                   disabled={!value.trim() || isPolishing || isLoading}
                   className={cn(

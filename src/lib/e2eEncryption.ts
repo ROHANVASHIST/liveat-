@@ -318,7 +318,7 @@ class E2EEncryption {
   async decryptMedia(
     encryptedData: ArrayBuffer,
     mediaKey: CryptoKey,
-    iv: Uint8Array
+    iv: ArrayBuffer
   ): Promise<ArrayBuffer> {
     return await crypto.subtle.decrypt(
       {
