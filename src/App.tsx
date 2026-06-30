@@ -194,11 +194,13 @@ function App() {
         });
         if (response.ok) {
           const user = await response.json();
-          setCurrentUser(user.name);
-          setCurrentUserEmail(user.email || '');
-          setCurrentUserId(user.id);
-          setCurrentUserAvatar(user.avatar);
-          setIsConnected(true);
+          if (user) {
+            setCurrentUser(user.name);
+            setCurrentUserEmail(user.email || '');
+            setCurrentUserId(user.id);
+            setCurrentUserAvatar(user.avatar);
+            setIsConnected(true);
+          }
         }
       } catch (err) {
         console.error('Failed to check backend session:', err);
@@ -253,9 +255,10 @@ function App() {
   useEffect(() => {
     if (!currentUser || !isConnected) return;
 
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || `${window.location.hostname}:3000`;
-    const protocol = window.location.protocol === 'https:' || backendUrl.includes(':443') ? 'wss:' : 'ws:';
-    const wsUrl = backendUrl.startsWith('ws') ? backendUrl : `${protocol}//${backendUrl}`;
+    const rawUrl = import.meta.env.VITE_BACKEND_URL || `${window.location.hostname}:3000`;
+    const protocol = window.location.protocol === 'https:' || rawUrl.includes(':443') ? 'wss:' : 'ws:';
+    const hostPart = rawUrl.replace(/^https?:\/\//, '');
+    const wsUrl = rawUrl.startsWith('ws') ? rawUrl : `${protocol}//${hostPart}`;
     const socket = new WebSocket(wsUrl);
 
     socket.onopen = () => {

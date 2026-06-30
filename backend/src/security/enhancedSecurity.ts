@@ -103,14 +103,8 @@ export const parameterPollution = hpp({
 // Enhanced CORS configuration
 export const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    const allowedOrigins = [
-      'http://localhost:5173',
-      'http://localhost:3000',
-      'https://yourdomain.com',
-    ];
-    
-    // Allow requests with no origin (mobile apps, curl, etc.)
-    if (!origin || allowedOrigins.some(allowed => allowed === origin || origin.startsWith(allowed))) {
+    // Allow all localhost origins in development
+    if (!origin || origin.includes('localhost') || origin.includes('127.0.0.1')) {
       callback(null, true);
     } else {
       console.warn(`CORS blocked origin: ${origin}`);
