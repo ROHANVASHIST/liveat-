@@ -173,12 +173,12 @@ CREATE TABLE IF NOT EXISTS active_sessions (
 CREATE TABLE IF NOT EXISTS privacy_settings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id TEXT NOT NULL UNIQUE,
-  last_seen VISIBILITY DEFAULT 'everyone',
-  profile_photo VISIBILITY DEFAULT 'everyone',
-  status VISIBILITY DEFAULT 'everyone',
+  last_seen TEXT DEFAULT 'everyone',
+  profile_photo TEXT DEFAULT 'everyone',
+  status TEXT DEFAULT 'everyone',
   read_receipts BOOLEAN DEFAULT true,
   online_status BOOLEAN DEFAULT true,
-  group_invites VISIBILITY DEFAULT 'everyone',
+  group_invites TEXT DEFAULT 'everyone',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -232,7 +232,61 @@ CREATE TABLE IF NOT EXISTS security_logs (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-VISIBILITY AS ENUM ('everyone', 'contacts', 'nobody');
+-- Create pinned_messages table
+CREATE TABLE IF NOT EXISTS pinned_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  message_id UUID REFERENCES messages(id) ON DELETE CASCADE,
+  room_id TEXT NOT NULL,
+  pinned_by TEXT NOT NULL,
+  pinned_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(message_id)
+);
+
+-- Create user_blocks table
+CREATE TABLE IF NOT EXISTS user_blocks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  blocker_id TEXT NOT NULL,
+  blocked_user_id TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(blocker_id, blocked_user_id)
+);
+
+-- Create notification_settings table
+CREATE TABLE IF NOT EXISTS notification_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT NOT NULL UNIQUE,
+  message_notifications BOOLEAN DEFAULT true,
+  group_notifications BOOLEAN DEFAULT true,
+  sound_enabled BOOLEAN DEFAULT true,
+  vibration_enabled BOOLEAN DEFAULT true,
+  do_not_disturb BOOLEAN DEFAULT false,
+  dnd_from TIME,
+  dnd_to TIME,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create notifications table
+CREATE TABLE IF NOT EXISTS notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  data JSONB,
+  read_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create analytics_snapshots table
+CREATE TABLE IF NOT EXISTS analytics_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  metric_type TEXT NOT NULL,
+  metric_name TEXT NOT NULL,
+  metric_value NUMERIC NOT NULL,
+  metadata JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
 -- Create indexes
 CREATE INDEX IF NOT EXISTS idx_messages_room_id ON messages(room_id);
@@ -304,40 +358,66 @@ ALTER TABLE analytics_snapshots ENABLE ROW LEVEL SECURITY;
 -- ALTER TABLE messages DISABLE ROW LEVEL SECURITY;
 
 -- Create policies
+DROP POLICY IF EXISTS "Users can read all users" ON users;
 CREATE POLICY "Users can read all users" ON users FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Users can update own profile" ON users;
 CREATE POLICY "Users can update own profile" ON users FOR UPDATE USING (auth.uid() = id);
 
+DROP POLICY IF EXISTS "Anyone can read rooms" ON rooms;
 CREATE POLICY "Anyone can read rooms" ON rooms FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Authenticated users can create rooms" ON rooms;
 CREATE POLICY "Authenticated users can create rooms" ON rooms FOR INSERT WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Anyone can read messages" ON messages;
 CREATE POLICY "Anyone can read messages" ON messages FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Authenticated users can create messages" ON messages;
 CREATE POLICY "Authenticated users can create messages" ON messages FOR INSERT WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Anyone can read reactions" ON message_reactions;
 CREATE POLICY "Anyone can read reactions" ON message_reactions FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Authenticated users can create reactions" ON message_reactions;
 CREATE POLICY "Authenticated users can create reactions" ON message_reactions FOR INSERT WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Anyone can read group members" ON group_members;
 CREATE POLICY "Anyone can read group members" ON group_members FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Authenticated users can create group members" ON group_members;
 CREATE POLICY "Authenticated users can create group members" ON group_members FOR INSERT WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Anyone can read status updates" ON status_updates;
 CREATE POLICY "Anyone can read status updates" ON status_updates FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Authenticated users can create status updates" ON status_updates;
 CREATE POLICY "Authenticated users can create status updates" ON status_updates FOR INSERT WITH CHECK (true);
 
 -- Feature Policies
+DROP POLICY IF EXISTS "Anyone can read pinned messages" ON pinned_messages;
 CREATE POLICY "Anyone can read pinned messages" ON pinned_messages FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Users can pin/unpin messages" ON pinned_messages;
 CREATE POLICY "Users can pin/unpin messages" ON pinned_messages FOR INSERT WITH CHECK (true);
+DROP POLICY IF EXISTS "Users can unpin messages" ON pinned_messages;
 CREATE POLICY "Users can unpin messages" ON pinned_messages FOR DELETE USING (true);
 
+DROP POLICY IF EXISTS "Users can manage their blocks" ON user_blocks;
 CREATE POLICY "Users can manage their blocks" ON user_blocks FOR SELECT USING (blocker_id = current_user_id());
+DROP POLICY IF EXISTS "Users can block others" ON user_blocks;
 CREATE POLICY "Users can block others" ON user_blocks FOR INSERT WITH CHECK (true);
+DROP POLICY IF EXISTS "Users can unblock" ON user_blocks;
 CREATE POLICY "Users can unblock" ON user_blocks FOR DELETE USING (true);
 
+DROP POLICY IF EXISTS "Users can read own notification settings" ON notification_settings;
 CREATE POLICY "Users can read own notification settings" ON notification_settings FOR SELECT USING (user_id = current_user_id());
+DROP POLICY IF EXISTS "Users can update own notification settings" ON notification_settings;
 CREATE POLICY "Users can update own notification settings" ON notification_settings FOR UPDATE USING (user_id = current_user_id());
+DROP POLICY IF EXISTS "Users can create own notification settings" ON notification_settings;
 CREATE POLICY "Users can create own notification settings" ON notification_settings FOR INSERT WITH CHECK (user_id = current_user_id());
 
+DROP POLICY IF EXISTS "Users can read own notifications" ON notifications;
 CREATE POLICY "Users can read own notifications" ON notifications FOR SELECT USING (user_id = current_user_id());
+DROP POLICY IF EXISTS "System can create notifications" ON notifications;
 CREATE POLICY "System can create notifications" ON notifications FOR INSERT WITH CHECK (true);
+DROP POLICY IF EXISTS "Users can update own notifications" ON notifications;
 CREATE POLICY "Users can update own notifications" ON notifications FOR UPDATE USING (user_id = current_user_id());
 
+DROP POLICY IF EXISTS "Anyone can read analytics" ON analytics_snapshots;
 CREATE POLICY "Anyone can read analytics" ON analytics_snapshots FOR SELECT USING (true);
+DROP POLICY IF EXISTS "System can write analytics" ON analytics_snapshots;
 CREATE POLICY "System can write analytics" ON analytics_snapshots FOR INSERT WITH CHECK (true);

@@ -3,6 +3,7 @@ import { ChatWelcome, ChatRoom, ChatList, UserProfile, AnalyticsDashboard, Insta
 import { Button } from './components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './components/ui/dialog';
 import { Input } from './components/ui/input';
+import { ForwardMessageDialog } from './components/ui/chat/message-actions';
 import { 
   Users 
 } from 'lucide-react';
@@ -12,6 +13,7 @@ import { Avatar, AvatarFallback, AvatarImage } from './components/ui/avatar';
 import { polishText, summarizeChat, generateAIResponse } from './lib/ai';
 import { encryptMessage, decryptMessage } from './lib/encryption';
 import { CallUI, useCallTimer } from './components/ui/chat/call-ui';
+import { useWebRTC } from './lib/webrtc';
 import { StatusViewer } from './components/ui/chat/status-viewer';
 
 const supabase = createClient(
@@ -103,7 +105,39 @@ function App() {
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [isCallMinimized, setIsCallMinimized] = useState(false);
+  const [callId, setCallId] = useState<string>('');
+  const [remoteOffer, setRemoteOffer] = useState<any>(null);
   const callTimer = useCallTimer();
+
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+
+  // Forward state
+  const [forwardDialogOpen, setForwardDialogOpen] = useState(false);
+  const [forwardMessage, setForwardMessage] = useState<any>(null);
+
+  const getDMRoomId = (uid1: string, uid2: string) => {
+    const sorted = [uid1, uid2].sort();
+    return `dm_${sorted[0]}_${sorted[1]}`;
+  };
+
+  const webrtc = useWebRTC({
+    onLocalStream: (stream) => {
+      if (localVideoRef.current) stream && (localVideoRef.current.srcObject = stream);
+    },
+    onRemoteStream: (stream) => {
+      if (remoteVideoRef.current) stream && (remoteVideoRef.current.srcObject = stream);
+    },
+    onConnectionState: (state) => {
+      if (state === 'connected') {
+        setIsCallMinimized(false);
+      }
+    },
+    onError: (error) => {
+      console.error('WebRTC error:', error);
+      handleEndCall();
+    },
+  });
 
   // Status/stories state
   const [isStatusViewerOpen, setIsStatusViewerOpen] = useState(false);
@@ -327,6 +361,8 @@ function App() {
             isSelf: data.senderId === (currentUserId || currentUser),
             type: data.msgType as 'text' | 'image' | 'file',
             mediaUrl: data.mediaUrl,
+            replyTo: data.replyTo,
+            isForwarded: data.isForwarded,
           }]);
           // Track unread counts for non-self messages in non-active rooms
           if (data.senderId !== (currentUserId || currentUser) && data.roomId !== activeRoomId) {
@@ -346,10 +382,20 @@ function App() {
             isSelf: msg.senderId === (currentUserId || currentUser),
             type: msg.msgType as 'text' | 'image' | 'file',
             mediaUrl: msg.mediaUrl,
+            replyTo: msg.replyTo,
           })));
           break;
         case 'user_count':
           setOnlineUsers(data.count);
+          break;
+        case 'online_users':
+          setUsers((prev) => {
+            const onlineIds = new Set(data.users.map((u: any) => u.id));
+            return prev.map(u => ({
+              ...u,
+              status: u.id === 'ai-concierge-node' ? 'online' as const : (onlineIds.has(u.id) ? 'online' as const : 'offline' as const),
+            }));
+          });
           break;
         case 'user_joined':
           setUsers((prev) => {
@@ -367,7 +413,7 @@ function App() {
           });
           break;
         case 'user_left':
-          setUsers((prev) => prev.filter(u => u.id !== data.userId));
+          setUsers((prev) => prev.map(u => u.id === data.userId ? { ...u, status: 'offline' as const } : u));
           break;
         case 'room_created':
           setRooms((prev) => [
@@ -392,6 +438,37 @@ function App() {
             }
             return m;
           }));
+          break;
+        case 'call:incoming':
+          setIsVideoCall(data.callType === 'video');
+          setCallDirection('incoming');
+          setCallId(data.callId);
+          setIsCallOpen(true);
+          setIsMuted(false);
+          setIsVideoEnabled(data.callType === 'video');
+          setIsSpeakerOn(false);
+          setIsCallMinimized(false);
+          break;
+        case 'call:offer':
+          setRemoteOffer({ callerId: data.userId, offer: data.data });
+          break;
+        case 'call:accepted':
+          break;
+        case 'call:rejected':
+          handleEndCall();
+          break;
+        case 'call:ended':
+          webrtc.cleanup();
+          setIsCallOpen(false);
+          setCallId('');
+          callTimer.stop();
+          setIsCallMinimized(false);
+          break;
+        case 'call:answer':
+          if (data.data) webrtc.handleRemoteDescription(data.data);
+          break;
+        case 'call:ice-candidate':
+          if (data.data) webrtc.handleIceCandidate(data.data);
           break;
       }
     };
@@ -464,19 +541,6 @@ function App() {
     const content = currentMessage.trim() || (pendingFile ? pendingFile.name : '');
     const isAINode = activeChatUserId === 'ai-concierge-node';
 
-    const message: Message = {
-      id: Date.now().toString(),
-      senderId: currentUserId || currentUser,
-      senderName: currentUser,
-      content,
-      timestamp: new Date(),
-      isSelf: true,
-      type: msgType,
-      mediaUrl: mediaUrl || filePreview || undefined,
-    };
-
-    setMessages((prev) => [...prev, message]);
-
     if (!isAINode) {
       ws.send(JSON.stringify({
         type: 'message',
@@ -486,6 +550,12 @@ function App() {
         roomId: activeRoomId,
         msgType: msgType,
         mediaUrl: mediaUrl,
+        replyTo: replyToMsg ? {
+          id: replyToMsg.id,
+          content: replyToMsg.content,
+          senderName: replyToMsg.senderName,
+          type: replyToMsg.type,
+        } : undefined,
       }));
     }
 
@@ -493,6 +563,7 @@ function App() {
     setCurrentMessage('');
     setFilePreview(null);
     setPendingFile(null);
+    setReplyToMsg(null);
 
     // AI Concierge Auto-Reply
     if (isAINode && content) {
@@ -569,29 +640,52 @@ function App() {
   };
 
   // Call handlers
-  const handleStartCall = (video: boolean) => {
+  const handleStartCall = async (video: boolean) => {
+    if (!ws || !activeChatUserId) return;
     setIsVideoCall(video);
     setCallDirection('outgoing');
     setIsCallOpen(true);
     setIsMuted(false);
-    setIsVideoEnabled(true);
+    setIsVideoEnabled(video);
     setIsSpeakerOn(false);
     setIsCallMinimized(false);
+    setCallId('pending');
     callTimer.start();
+    await webrtc.startCall(video, ws, activeChatUserId, currentUserId || currentUser, currentUser);
   };
 
-  const handleAcceptCall = () => {
+  const handleAcceptCall = async () => {
+    if (!ws || !remoteOffer || !callId) return;
+    const isVideo = isVideoCall;
+    setIsCallMinimized(false);
     callTimer.start();
+    await webrtc.acceptCall(ws, callId, remoteOffer?.callerId || '', currentUserId || currentUser, remoteOffer.offer, isVideo);
+    setRemoteOffer(null);
   };
 
   const handleEndCall = () => {
+    if (ws && callId) {
+      webrtc.endCall(ws, callId, currentUserId || currentUser);
+    } else {
+      webrtc.cleanup();
+    }
     setIsCallOpen(false);
+    setCallId('');
+    setRemoteOffer(null);
     callTimer.stop();
     setIsCallMinimized(false);
   };
 
-  const handleToggleMute = () => setIsMuted(m => !m);
-  const handleToggleVideo = () => setIsVideoEnabled(v => !v);
+  const handleToggleMute = () => {
+    const result = webrtc.toggleMute();
+    if (result !== null) setIsMuted(!result);
+  };
+
+  const handleToggleVideo = () => {
+    const result = webrtc.toggleVideo();
+    if (result !== null) setIsVideoEnabled(!result);
+  };
+
   const handleToggleSpeaker = () => setIsSpeakerOn(s => !s);
 
   // Status handlers
@@ -742,7 +836,7 @@ function App() {
           }}
           onSelectUser={(id) => {
             setActiveChatUserId(id);
-            setActiveRoomId('');
+            setActiveRoomId(getDMRoomId(currentUserId || currentUser, id));
             setIsSidebarOpen(false);
             setActiveNav('messages');
           }}
@@ -796,6 +890,8 @@ function App() {
             hasStatus={activeUserHasStatus}
             users={users.map(u => ({ id: u.id, name: u.name, avatar: u.avatar }))}
             wallpaper={chatWallpaper || undefined}
+            onReply={(msg) => { setReplyToMsg(msg); }}
+            onForward={(msg) => { setForwardMessage(msg); setForwardDialogOpen(true); }}
           />
         )}
 
@@ -890,6 +986,37 @@ function App() {
         callDuration={callTimer.seconds}
         onMinimize={() => setIsCallMinimized(!isCallMinimized)}
         isMinimized={isCallMinimized}
+        localVideoRef={localVideoRef}
+        remoteVideoRef={remoteVideoRef}
+      />
+
+      {/* Forward Dialog */}
+      <ForwardMessageDialog
+        isOpen={forwardDialogOpen}
+        onOpenChange={setForwardDialogOpen}
+        message={forwardMessage || { content: '', type: 'text', senderName: '' }}
+        contacts={users.map(u => ({ id: u.id, name: u.name, avatar: u.avatar }))}
+        groups={rooms.filter(r => r.type !== 'direct').map(r => ({ id: r.id, name: r.name }))}
+        onForward={(recipients) => {
+          if (!ws || !forwardMessage) return;
+          recipients.forEach(r => {
+            const targetRoomId = r.type === 'contact'
+              ? getDMRoomId(currentUserId || currentUser, r.id)
+              : r.id;
+            ws.send(JSON.stringify({
+              type: 'message',
+              content: encryptMessage(forwardMessage.content),
+              senderId: currentUserId || currentUser,
+              senderName: currentUser,
+              roomId: targetRoomId,
+              msgType: forwardMessage.type || 'text',
+              mediaUrl: forwardMessage.mediaUrl,
+              isForwarded: true,
+            }));
+          });
+          setForwardDialogOpen(false);
+          setForwardMessage(null);
+        }}
       />
 
       {/* Status Viewer */}

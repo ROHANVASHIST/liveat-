@@ -2011,6 +2011,11 @@ wss.on('connection', (ws, req) => {
       }
       
       broadcastUserCount();
+
+      ws.send(JSON.stringify({
+        type: 'online_users',
+        users: getOnlineUsers(),
+      }));
       
       broadcastToAll({
         type: 'user_joined',
@@ -2018,6 +2023,8 @@ wss.on('connection', (ws, req) => {
         userName: message.userName,
         timestamp: new Date().toISOString(),
       });
+
+      broadcastOnlineUsers();
     } else if (message.type === 'message') {
       const client = clients.get(clientId);
       if (!client || !client.authenticated) {
@@ -2066,20 +2073,31 @@ wss.on('connection', (ws, req) => {
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 7);
 
+      const replyTo = message.replyTo ? {
+        id: message.replyTo.id,
+        content: message.replyTo.content,
+        senderName: message.replyTo.senderName,
+        type: message.replyTo.type,
+      } : null;
+
       let savedMessage: any = null;
       try {
+        const insertData: any = {
+          sender_id: message.senderId,
+          sender_name: message.senderName,
+          content: message.content,
+          room_id: message.roomId,
+          message_type: message.msgType || 'text',
+          media_url: mediaUrl,
+          media_storage_path: mediaStoragePath,
+          expires_at: expiresAt.toISOString(),
+        };
+        if (replyTo) {
+          insertData.reply_to_msg_id = replyTo.id;
+        }
         const { data: msg } = await supabase
           .from('messages')
-          .insert({
-            sender_id: message.senderId,
-            sender_name: message.senderName,
-            content: message.content,
-            room_id: message.roomId,
-            message_type: message.msgType || 'text',
-            media_url: mediaUrl,
-            media_storage_path: mediaStoragePath,
-            expires_at: expiresAt.toISOString(),
-          })
+          .insert(insertData)
           .select()
           .single();
         savedMessage = msg;
@@ -2098,6 +2116,8 @@ wss.on('connection', (ws, req) => {
         expiresAt: savedMessage?.expires_at || expiresAt.toISOString(),
         msgType: msgType,
         mediaUrl: mediaUrl,
+        replyTo: replyTo,
+        isForwarded: message.isForwarded || false,
       });
     } else if (message.type === 'read_receipt') {
       broadcastToAll({
@@ -2166,6 +2186,9 @@ wss.on('connection', (ws, req) => {
           expiresAt: msg.expires_at,
           msgType: msg.message_type,
           mediaUrl: msg.media_url,
+          replyTo: msg.reply_to_msg_id ? {
+            id: msg.reply_to_msg_id,
+          } : null,
         })),
       }));
     } else if (message.type === 'load_status') {
@@ -2193,6 +2216,68 @@ wss.on('connection', (ws, req) => {
         userId: message.userId,
         timestamp: new Date().toISOString(),
       });
+    } else if (message.type === 'call:initiate') {
+      const client = clients.get(clientId);
+      if (!client || !client.authenticated) {
+        ws.send(JSON.stringify({ type: 'error', error: 'Authentication required' }));
+        return;
+      }
+      const call = callService.initiateCall(
+        message.callerId,
+        message.calleeId,
+        message.callerName,
+        message.callType
+      );
+      const sent = sendToUser(message.calleeId, {
+        type: 'call:incoming',
+        callId: call.id,
+        callerId: message.callerId,
+        callerName: message.callerName,
+        callerAvatar: message.callerAvatar,
+        callType: message.callType,
+      });
+      ws.send(JSON.stringify({
+        type: 'call:initiated',
+        callId: call.id,
+        calleeId: message.calleeId,
+        delivered: sent,
+      }));
+    } else if (message.type === 'call:accept') {
+      const call = callService.acceptCall(message.callId);
+      if (call) {
+        sendToUser(call.callerId, {
+          type: 'call:accepted',
+          callId: call.id,
+          calleeId: message.userId,
+        });
+        ws.send(JSON.stringify({ type: 'call:accepted', callId: call.id }));
+      }
+    } else if (message.type === 'call:reject') {
+      const call = callService.rejectCall(message.callId);
+      if (call) {
+        sendToUser(call.callerId, {
+          type: 'call:rejected',
+          callId: call.id,
+          calleeId: message.userId,
+        });
+      }
+    } else if (message.type === 'call:end') {
+      const call = callService.endCall(message.callId);
+      if (call) {
+        const otherId = call.callerId === message.userId ? call.calleeId : call.callerId;
+        sendToUser(otherId, {
+          type: 'call:ended',
+          callId: call.id,
+          userId: message.userId,
+        });
+      }
+    } else if (message.type === 'call:offer' || message.type === 'call:answer' || message.type === 'call:ice-candidate') {
+      sendToUser(message.targetId, {
+        type: message.type,
+        callId: message.callId,
+        userId: message.userId,
+        data: message.data,
+      });
     }
   });
 
@@ -2201,12 +2286,16 @@ wss.on('connection', (ws, req) => {
     if (client) {
       console.log(`Client ${clientId} disconnected (${client.name})`);
       clients.delete(clientId);
-      broadcastUserCount();
-      broadcastToAll({
-        type: 'user_left',
-        userId: clientId,
-        timestamp: new Date().toISOString(),
-      });
+      const stillConnected = [...clients.values()].some(c => c.id === client.id);
+      if (!stillConnected) {
+        broadcastUserCount();
+        broadcastToAll({
+          type: 'user_left',
+          userId: client.id,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      broadcastOnlineUsers();
     }
   });
 
@@ -2224,11 +2313,44 @@ function broadcastToAll(data: object) {
   });
 }
 
+function getOnlineUsers(): { id: string; name: string }[] {
+  const seen = new Map<string, string>();
+  clients.forEach((c) => {
+    if (!seen.has(c.id)) {
+      seen.set(c.id, c.name);
+    }
+  });
+  return Array.from(seen.entries()).map(([id, name]) => ({ id, name }));
+}
+
 function broadcastUserCount() {
   broadcastToAll({
     type: 'user_count',
-    count: clients.size,
+    count: getOnlineUsers().length,
   });
+}
+
+function broadcastOnlineUsers() {
+  broadcastToAll({
+    type: 'online_users',
+    users: getOnlineUsers(),
+  });
+}
+
+function sendToUser(userId: string, data: object): boolean {
+  const message = JSON.stringify(data);
+  let sent = false;
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      for (const [, c] of clients) {
+        if (c.id === userId && c.ws === client) {
+          client.send(message);
+          sent = true;
+        }
+      }
+    }
+  });
+  return sent;
 }
 
 // ============================================

@@ -45,6 +45,8 @@ interface CallUIProps {
   onMinimize?: () => void;
   isMinimized?: boolean;
   className?: string;
+  localVideoRef?: React.RefObject<HTMLVideoElement>;
+  remoteVideoRef?: React.RefObject<HTMLVideoElement>;
 }
 
 export const CallUI: React.FC<CallUIProps> = ({
@@ -66,6 +68,8 @@ export const CallUI: React.FC<CallUIProps> = ({
   onMinimize,
   isMinimized,
   className,
+  localVideoRef,
+  remoteVideoRef,
 }) => {
   const formatDuration = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
@@ -108,11 +112,18 @@ export const CallUI: React.FC<CallUIProps> = ({
       "fixed inset-0 z-50 flex flex-col bg-background",
       className
     )}>
-      {/* Video Background */}
+      {/* Remote Video (full screen) */}
       {isVideo && isVideoEnabled && (
         <div className="absolute inset-0 bg-black">
-          <video className="w-full h-full object-cover" autoPlay muted playsInline />
+          <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30" />
+        </div>
+      )}
+
+      {/* Local Video (PiP overlay) */}
+      {isVideo && isVideoEnabled && (
+        <div className="absolute top-4 left-4 z-20 w-40 h-28 rounded-lg overflow-hidden border-2 border-primary/40 shadow-lg">
+          <video ref={localVideoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
         </div>
       )}
 

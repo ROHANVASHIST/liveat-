@@ -97,27 +97,34 @@ ALTER TABLE user_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE security_audit_log ENABLE ROW LEVEL SECURITY;
 
 -- Users can only access their own MFA settings
+DROP POLICY IF EXISTS "Users can view own MFA settings" ON user_mfa_settings;
 CREATE POLICY "Users can view own MFA settings" ON user_mfa_settings
   FOR SELECT USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update own MFA settings" ON user_mfa_settings;
 CREATE POLICY "Users can update own MFA settings" ON user_mfa_settings
   FOR UPDATE USING (auth.uid() = user_id);
 
 -- Users can only access their own authenticators
+DROP POLICY IF EXISTS "Users can view own authenticators" ON user_authenticators;
 CREATE POLICY "Users can view own authenticators" ON user_authenticators
   FOR SELECT USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete own authenticators" ON user_authenticators;
 CREATE POLICY "Users can delete own authenticators" ON user_authenticators
   FOR DELETE USING (auth.uid() = user_id);
 
 -- Users can only access their own sessions
+DROP POLICY IF EXISTS "Users can view own sessions" ON user_sessions;
 CREATE POLICY "Users can view own sessions" ON user_sessions
   FOR SELECT USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update own sessions" ON user_sessions;
 CREATE POLICY "Users can update own sessions" ON user_sessions
   FOR UPDATE USING (auth.uid() = user_id);
 
 -- Users can view their own audit logs
+DROP POLICY IF EXISTS "Users can view own audit logs" ON security_audit_log;
 CREATE POLICY "Users can view own audit logs" ON security_audit_log
   FOR SELECT USING (auth.uid() = user_id);
 

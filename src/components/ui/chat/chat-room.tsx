@@ -95,6 +95,8 @@ interface ChatRoomProps {
   hasStatus?: boolean;
   users?: MentionUser[];
   wallpaper?: string;
+  onReply?: (message: Message) => void;
+  onForward?: (message: Message) => void;
 }
 
 export const ChatRoom: React.FC<ChatRoomProps> = ({
@@ -131,6 +133,8 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
   hasStatus,
   users = [],
   wallpaper,
+  onReply,
+  onForward,
 }) => {
   const [isMuted, setIsMuted] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -460,6 +464,8 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
                         currentUser={currentUser}
                         onReaction={(emoji) => onReaction?.(message.id, emoji)}
                         onPin={() => onPinMessage?.(message.id)}
+                        onReply={onReply ? () => onReply(message) : undefined}
+                        onForward={onForward ? () => onForward(message) : undefined}
                       />
                     ))}
                   </React.Fragment>
