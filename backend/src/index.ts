@@ -35,6 +35,13 @@ import { folderService } from './services/folderService';
 import { themeService } from './services/themeService';
 import { syncService } from './services/syncService';
 
+// In-memory stores for new features
+const savedMessages = new Map<string, any>();
+const pinnedConversations = new Map<string, any>();
+const roomMuteSettings = new Map<string, any>();
+const messageReminders = new Map<string, any>();
+const userStatuses = new Map<string, { userId: string; status: string; statusText: string }>();
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -2216,10 +2223,189 @@ wss.on('connection', (ws, req) => {
         userId: message.userId,
         timestamp: new Date().toISOString(),
       });
+    } else if (message.type === 'typing:start') {
+      const client = clients.get(clientId);
+      if (client) {
+        const roomId = message.roomId || '';
+        const targetId = message.targetId || '';
+        if (targetId) {
+          sendToUser(targetId, {
+            type: 'typing:start',
+            userId: client.id,
+            userName: client.name,
+            roomId,
+          });
+        } else if (roomId) {
+          clients.forEach((c) => {
+            if (c.id !== client.id && c.ws && c.ws.readyState === WebSocket.OPEN) {
+              c.ws.send(JSON.stringify({
+                type: 'typing:start',
+                userId: client.id,
+                userName: client.name,
+                roomId,
+              }));
+            }
+          });
+        }
+      }
+    } else if (message.type === 'typing:stop') {
+      const client = clients.get(clientId);
+      if (client) {
+        const roomId = message.roomId || '';
+        const targetId = message.targetId || '';
+        if (targetId) {
+          sendToUser(targetId, {
+            type: 'typing:stop',
+            userId: client.id,
+            roomId,
+          });
+        } else if (roomId) {
+          clients.forEach((c) => {
+            if (c.id !== client.id && c.ws && c.ws.readyState === WebSocket.OPEN) {
+              c.ws.send(JSON.stringify({
+                type: 'typing:stop',
+                userId: client.id,
+                roomId,
+              }));
+            }
+          });
+        }
+      }
+    } else if (message.type === 'user:status') {
+      const client = clients.get(clientId);
+      if (client) {
+        broadcastToAll({
+          type: 'user:status',
+          userId: client.id,
+          userName: client.name,
+          status: message.status,
+          statusText: message.statusText || '',
+        });
+      }
+    } else if (message.type === 'conversation:pin') {
+      const client = clients.get(clientId);
+      if (client) {
+        pinnedConversations.set(`${client.id}_${message.conversationId}`, {
+          userId: client.id,
+          conversationId: message.conversationId,
+          conversationName: message.conversationName,
+          pinnedAt: new Date().toISOString(),
+        });
+      }
+    } else if (message.type === 'conversation:unpin') {
+      const client = clients.get(clientId);
+      if (client) {
+        pinnedConversations.delete(`${client.id}_${message.conversationId}`);
+      }
+    } else if (message.type === 'message:save') {
+      const client = clients.get(clientId);
+      if (client) {
+        savedMessages.set(`${client.id}_${message.messageId}`, {
+          userId: client.id,
+          messageId: message.messageId,
+          content: message.content,
+          senderName: message.senderName,
+          roomId: message.roomId,
+          savedAt: new Date().toISOString(),
+        });
+        ws.send(JSON.stringify({ type: 'message:saved', messageId: message.messageId }));
+      }
+    } else if (message.type === 'message:unsave') {
+      const client = clients.get(clientId);
+      if (client) {
+        savedMessages.delete(`${client.id}_${message.messageId}`);
+        ws.send(JSON.stringify({ type: 'message:unsaved', messageId: message.messageId }));
+      }
+    } else if (message.type === 'message:remind') {
+      const client = clients.get(clientId);
+      if (client) {
+        const remindAt = new Date(Date.now() + (message.minutes || 5) * 60 * 1000);
+        messageReminders.set(`${client.id}_${message.messageId}`, {
+          userId: client.id,
+          messageId: message.messageId,
+          content: message.content,
+          senderName: message.senderName,
+          roomId: message.roomId,
+          remindAt,
+        });
+        setTimeout(() => {
+          const reminder = messageReminders.get(`${client.id}_${message.messageId}`);
+          if (reminder) {
+            sendToUser(client!.id, {
+              type: 'message:reminder',
+              messageId: reminder.messageId,
+              content: reminder.content,
+              senderName: reminder.senderName,
+              roomId: reminder.roomId,
+            });
+            messageReminders.delete(`${client.id}_${message.messageId}`);
+          }
+        }, message.minutes * 60 * 1000);
+        ws.send(JSON.stringify({ type: 'message:reminder_set', messageId: message.messageId, minutes: message.minutes }));
+      }
+    } else if (message.type === 'room:mute') {
+      const client = clients.get(clientId);
+      if (client) {
+        roomMuteSettings.set(`${client.id}_${message.roomId}`, {
+          userId: client.id,
+          roomId: message.roomId,
+          muted: message.muted,
+          duration: message.duration || 'always',
+          mutedAt: new Date().toISOString(),
+        });
+        ws.send(JSON.stringify({ type: 'room:muted', roomId: message.roomId, muted: message.muted }));
+      }
+    } else if (message.type === 'init:saved') {
+      const client = clients.get(clientId);
+      if (client) {
+        const userSaved: any[] = [];
+        savedMessages.forEach((s) => {
+          if (s.userId === client!.id) userSaved.push(s);
+        });
+        ws.send(JSON.stringify({ type: 'saved:messages', messages: userSaved }));
+      }
+    } else if (message.type === 'init:pinned') {
+      const client = clients.get(clientId);
+      if (client) {
+        const userPinned: any[] = [];
+        pinnedConversations.forEach((p) => {
+          if (p.userId === client!.id) userPinned.push(p);
+        });
+        ws.send(JSON.stringify({ type: 'pinned:conversations', conversations: userPinned }));
+      }
+    } else if (message.type === 'init:muted') {
+      const client = clients.get(clientId);
+      if (client) {
+        const userMuted: any[] = [];
+        roomMuteSettings.forEach((m) => {
+          if (m.userId === client!.id) userMuted.push(m);
+        });
+        ws.send(JSON.stringify({ type: 'muted:rooms', mutedRooms: userMuted }));
+      }
+    } else if (message.type === 'init:status') {
+      const client = clients.get(clientId);
+      if (client) {
+        const userStatus = userStatuses.get(client.id);
+        ws.send(JSON.stringify({
+          type: 'user:current_status',
+          status: userStatus?.status || 'online',
+          statusText: userStatus?.statusText || '',
+        }));
+      }
     } else if (message.type === 'call:initiate') {
       const client = clients.get(clientId);
       if (!client || !client.authenticated) {
         ws.send(JSON.stringify({ type: 'error', error: 'Authentication required' }));
+        return;
+      }
+      const existing = callService.getPendingCall(message.calleeId);
+      if (existing && existing.status === 'ringing') {
+        ws.send(JSON.stringify({
+          type: 'call:initiated',
+          callId: existing.id,
+          calleeId: message.calleeId,
+          delivered: true,
+        }));
         return;
       }
       const call = callService.initiateCall(
@@ -2242,6 +2428,48 @@ wss.on('connection', (ws, req) => {
         calleeId: message.calleeId,
         delivered: sent,
       }));
+    } else if (message.type === 'call:offer') {
+      let callId = message.callId;
+      if (callId === 'pending' || !callId) {
+        const client = clients.get(clientId);
+        if (client) {
+          const call = callService.initiateCall(
+            message.callerId,
+            message.targetId,
+            message.callerName || client.name,
+            message.callType || 'audio'
+          );
+          callId = call.id;
+          ws.send(JSON.stringify({
+            type: 'call:initiated',
+            callId: call.id,
+            calleeId: message.targetId,
+            delivered: true,
+          }));
+          sendToUser(message.targetId, {
+            type: 'call:incoming',
+            callId: call.id,
+            callerId: message.callerId,
+            callerName: message.callerName || client.name,
+            callType: message.callType || 'audio',
+          });
+        }
+      }
+      sendToUser(message.targetId, {
+        type: message.type,
+        callId,
+        userId: message.userId,
+        callerId: message.callerId,
+        data: message.data,
+        callType: message.callType,
+      });
+    } else if (message.type === 'call:answer' || message.type === 'call:ice-candidate') {
+      sendToUser(message.targetId, {
+        type: message.type,
+        callId: message.callId,
+        userId: message.userId,
+        data: message.data,
+      });
     } else if (message.type === 'call:accept') {
       const call = callService.acceptCall(message.callId);
       if (call) {
@@ -2340,13 +2568,13 @@ function broadcastOnlineUsers() {
 function sendToUser(userId: string, data: object): boolean {
   const message = JSON.stringify(data);
   let sent = false;
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      for (const [, c] of clients) {
-        if (c.id === userId && c.ws === client) {
-          client.send(message);
-          sent = true;
-        }
+  clients.forEach((c) => {
+    if (c.id === userId && c.ws !== null && c.ws.readyState === WebSocket.OPEN) {
+      try {
+        c.ws.send(message);
+        sent = true;
+      } catch (e) {
+        console.error(`Failed to send to user ${userId}:`, e);
       }
     }
   });
