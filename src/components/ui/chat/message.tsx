@@ -25,6 +25,7 @@ import { LinkPreviewInline } from './link-preview';
 import { ReactionBar } from './reaction-bar';
 import { extractCodeBlocks } from './code-block';
 import { translateMessage } from '@/lib/ai';
+import { TtsButton } from '../tts-button';
 
 interface Message {
   id: string;
@@ -401,6 +402,7 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
               >
                 <Clock size={10} />
               </button>
+              <TtsButton text={message.content} />
               <button
                 onClick={handleCopy}
                 className="h-6 px-1.5 bg-background border border-border text-foreground hover:border-primary transition-colors flex items-center gap-1"
