@@ -18,6 +18,12 @@ import {
   Image,
   FileText,
   Pin,
+  CheckCheck,
+  Trash2,
+  Forward,
+  Bookmark,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '../avatar';
 
@@ -96,12 +102,20 @@ interface ChatRoomProps {
   users?: MentionUser[];
   wallpaper?: string;
   onReply?: (message: Message) => void;
+  onOpenThread?: (message: Message) => void;
   onForward?: (message: Message) => void;
   onTranslate?: (messageId: string, content: string) => void;
   onSave?: (messageId: string, content: string, senderName: string, roomId: string) => void;
   savedMessages?: Set<string>;
   onRemind?: (messageId: string, content: string, senderName: string) => void;
   typingUsers?: string[];
+  connectionStatus?: 'connected' | 'connecting' | 'disconnected' | 'reconnecting';
+  draftMessage?: string;
+  onDraftChange?: (roomId: string, value: string) => void;
+  readReceipts?: Record<string, string[]>;
+  hasMoreMessages?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
 }
 
 export const ChatRoom: React.FC<ChatRoomProps> = ({
@@ -139,14 +153,26 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
   users = [],
   wallpaper,
   onReply,
+  onOpenThread,
   onForward,
   onTranslate,
   onSave,
   savedMessages,
   onRemind,
   typingUsers = [],
+  connectionStatus = 'connected',
+  draftMessage,
+  onDraftChange,
+  readReceipts = {},
+  hasMoreMessages = true,
+  loadingMore = false,
+  onLoadMore,
 }) => {
   const [isMuted, setIsMuted] = React.useState(false);
+  const [muteDuration, setMuteDuration] = React.useState<string | null>(null);
+  const muteTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [bulkMode, setBulkMode] = React.useState(false);
+  const [selectedMessages, setSelectedMessages] = React.useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = React.useState('');
   const [showSearch, setShowSearch] = React.useState(false);
   const [activeFilter, setActiveFilter] = React.useState<'all' | 'media' | 'files' | 'pinned'>('all');
@@ -158,15 +184,56 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const handleExport = () => {
-    const transcript = messages.map(m => `[${m.timestamp.toLocaleString()}] ${m.senderName}: ${m.content}`).join('\n');
-    const blob = new Blob([transcript], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `transcript-${roomName}-${new Date().toISOString().split('T')[0]}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleExport = (format: 'txt' | 'json' = 'txt') => {
+    const timestamp = new Date().toISOString().split('T')[0];
+    if (format === 'json') {
+      const data = {
+        room: roomName,
+        exportedAt: new Date().toISOString(),
+        messages: messages.map(m => ({
+          senderName: m.senderName,
+          content: m.content,
+          timestamp: m.timestamp,
+          type: m.type,
+          mediaUrl: m.mediaUrl,
+          isEdited: m.isEdited,
+          isForwarded: m.isForwarded,
+          reactions: m.reactions,
+        })),
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `chat-${roomName}-${timestamp}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } else {
+      const transcript = messages.map(m => `[${new Date(m.timestamp).toLocaleString()}] ${m.senderName}: ${m.content}`).join('\n');
+      const blob = new Blob([transcript], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `transcript-${roomName}-${timestamp}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const handleImportJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (data.messages && Array.isArray(data.messages)) {
+          // onImportMessages?.(data.messages);
+        }
+      } catch {}
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   React.useEffect(() => {
@@ -271,6 +338,26 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
         typingUserNames={typingUsers}
       />
 
+      {/* Connection Status Bar */}
+      {connectionStatus !== 'connected' && (
+        <div className={cn(
+          "px-6 py-1.5 flex items-center gap-3 border-b text-[9px] uppercase tracking-widest font-bold animate-pulse",
+          connectionStatus === 'connecting' && "bg-amber-500/10 border-amber-500/20 text-amber-400",
+          connectionStatus === 'reconnecting' && "bg-amber-500/10 border-amber-500/20 text-amber-400",
+          connectionStatus === 'disconnected' && "bg-red-500/10 border-red-500/20 text-red-400"
+        )}>
+          <span className={cn(
+            "h-1.5 w-1.5 rounded-full",
+            connectionStatus === 'connecting' && "bg-amber-400",
+            connectionStatus === 'reconnecting' && "bg-amber-400",
+            connectionStatus === 'disconnected' && "bg-red-400"
+          )} />
+          {connectionStatus === 'connecting' && 'Establishing connection to signal node...'}
+          {connectionStatus === 'reconnecting' && 'Signal lost — reconnecting to mesh network...'}
+          {connectionStatus === 'disconnected' && 'Connection terminated — no signal route available'}
+        </div>
+      )}
+
       {/* Pinned Messages Bar */}
       {pinnedMessages.length > 0 && (
         <div className="border-b border-border bg-muted/10 backdrop-blur-sm">
@@ -368,6 +455,16 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
             </button>
           )}
           <button
+            onClick={() => setBulkMode(prev => !prev)}
+            className={cn(
+              'text-muted-foreground hover:text-primary transition-colors p-1',
+              bulkMode && 'text-primary'
+            )}
+            title="Select messages"
+          >
+            <CheckSquare size={14} />
+          </button>
+          <button
             onClick={() => setShowInfoPanel(prev => !prev)}
             className={cn(
               'text-muted-foreground hover:text-primary transition-colors p-1',
@@ -459,7 +556,26 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
                   </div>
                 )
               ) : (
-                groupedMessages.map((group) => (
+                <>
+                  {hasMoreMessages && filteredMessages.length > 0 && (
+                    <div className="flex justify-center">
+                      <button
+                        onClick={onLoadMore}
+                        disabled={loadingMore}
+                        className="text-[9px] uppercase tracking-widest text-primary/60 hover:text-primary font-bold py-2 px-4 border border-primary/20 hover:border-primary/40 transition-all duration-300"
+                      >
+                        {loadingMore ? (
+                          <span className="flex items-center gap-2">
+                            <span className="w-3 h-3 border border-primary/30 border-t-primary rounded-full animate-spin" />
+                            Loading...
+                          </span>
+                        ) : (
+                          'Load earlier messages'
+                        )}
+                      </button>
+                    </div>
+                  )}
+                  {groupedMessages.map((group) => (
                   <React.Fragment key={group.date}>
                     <div className="flex items-center gap-4 py-1">
                       <div className="flex-1 h-[1px] bg-border/50" />
@@ -469,26 +585,125 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
                       <div className="flex-1 h-[1px] bg-border/50" />
                     </div>
                     {group.messages.map((message) => (
-                      <Message
-                        key={message.id}
-                        message={message}
-                        currentUser={currentUser}
-                        onReaction={(emoji) => onReaction?.(message.id, emoji)}
-                        onPin={() => onPinMessage?.(message.id)}
-                        onReply={onReply ? () => onReply(message) : undefined}
-                        onForward={onForward ? () => onForward(message) : undefined}
-                        onTranslate={onTranslate}
-                        onSave={onSave ? (id, content, senderName) => onSave(id, content, senderName, roomName) : undefined}
-                        isSaved={savedMessages?.has(message.id)}
-                        onRemind={onRemind}
-                      />
+                      <div key={message.id} className={cn(
+                        "relative",
+                        bulkMode && "pl-10"
+                      )}>
+                        {bulkMode && (
+                          <button
+                            onClick={() => setSelectedMessages(prev => {
+                              const next = new Set(prev);
+                              if (next.has(message.id)) next.delete(message.id);
+                              else next.add(message.id);
+                              return next;
+                            })}
+                            className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-6 flex items-center justify-center border border-border hover:border-primary/50 transition-colors"
+                          >
+                            {selectedMessages.has(message.id) ? (
+                              <CheckSquare size={12} className="text-primary" />
+                            ) : (
+                              <Square size={12} className="text-muted-foreground" />
+                            )}
+                          </button>
+                        )}
+                        <Message
+                          key={message.id}
+                          message={message}
+                          currentUser={currentUser}
+                          onReaction={(emoji) => onReaction?.(message.id, emoji)}
+                          onPin={() => onPinMessage?.(message.id)}
+                          onReply={onReply ? () => onReply(message) : undefined}
+                          onOpenThread={onOpenThread ? () => onOpenThread(message) : undefined}
+                          onForward={onForward ? () => onForward(message) : undefined}
+                          onTranslate={onTranslate}
+                          onSave={onSave ? (id, content, senderName) => onSave(id, content, senderName, roomName) : undefined}
+                          isSaved={savedMessages?.has(message.id)}
+                          onRemind={onRemind}
+                          readReceipts={readReceipts[message.id]}
+                        />
+                      </div>
                     ))}
                   </React.Fragment>
-                ))
+                ))}
+                </>
               )}
               <div ref={messagesEndRef} className="h-4" />
             </div>
           </ChatContainer>
+
+          {/* Bulk Action Bar */}
+          {bulkMode && (
+            <div className="px-6 py-3 border-t border-primary/30 bg-primary/5 backdrop-blur-md flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-[9px] uppercase tracking-widest text-primary font-bold">
+                  {selectedMessages.size} selected
+                </span>
+                <button
+                  onClick={() => { setSelectedMessages(new Set()); setBulkMode(false); }}
+                  className="text-[8px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                >
+                  Cancel
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setSelectedMessages(new Set()); }}
+                  disabled={selectedMessages.size === 0}
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 text-[8px] uppercase tracking-wider border transition-colors",
+                    selectedMessages.size === 0
+                      ? "border-border/30 text-muted-foreground/30"
+                      : "border-border text-muted-foreground hover:border-primary/30 hover:text-primary"
+                  )}
+                >
+                  <Trash2 size={10} /> Delete
+                </button>
+                <button
+                  disabled={selectedMessages.size === 0}
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 text-[8px] uppercase tracking-wider border transition-colors",
+                    selectedMessages.size === 0
+                      ? "border-border/30 text-muted-foreground/30"
+                      : "border-border text-muted-foreground hover:border-primary/30 hover:text-primary"
+                  )}
+                >
+                  <Forward size={10} /> Forward
+                </button>
+                <button
+                  disabled={selectedMessages.size === 0}
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 text-[8px] uppercase tracking-wider border transition-colors",
+                    selectedMessages.size === 0
+                      ? "border-border/30 text-muted-foreground/30"
+                      : "border-border text-muted-foreground hover:border-primary/30 hover:text-primary"
+                  )}
+                >
+                  <Bookmark size={10} /> Save
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Typing Indicator above input */}
+          {typingUsers.length > 0 && (
+            <div className="px-6 py-1.5 border-t border-primary/10 bg-primary/[0.02] flex items-center gap-2 relative z-10">
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-0.5">
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                </div>
+                <span className="text-[9px] text-primary/70 italic normal-case tracking-normal">
+                  {typingUsers.length === 1
+                    ? `${typingUsers[0]} is typing...`
+                    : typingUsers.length === 2
+                    ? `${typingUsers[0]} and ${typingUsers[1]} are typing...`
+                    : `${typingUsers[0]} and ${typingUsers.length - 1} others are typing...`
+                  }
+                </span>
+              </div>
+            </div>
+          )}
 
           <ChatInput
             value={currentMessage}
@@ -545,18 +760,62 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
                   {isMuted ? <BellOff size={12} className="text-muted-foreground" /> : <Bell size={12} className="text-primary" />}
                   <span className="text-[9px] uppercase tracking-wider text-foreground">Notifications</span>
                 </div>
-                <button
-                  onClick={() => setIsMuted(prev => !prev)}
-                  className={cn(
-                    'text-[8px] uppercase tracking-wider px-2 py-1 border rounded font-bold transition-colors',
-                    isMuted
-                      ? 'border-destructive/30 text-destructive hover:bg-destructive/10'
-                      : 'border-primary/30 text-primary hover:bg-primary/10'
+                <div className="flex items-center gap-1">
+                  {isMuted && muteDuration && (
+                    <span className="text-[7px] uppercase tracking-wider text-muted-foreground mr-1">
+                      {muteDuration === '1h' ? '1h' : muteDuration === '8h' ? '8h' : muteDuration === '24h' ? '24h' : 'Forever'}
+                    </span>
                   )}
-                >
-                  {isMuted ? 'Muted' : 'Active'}
-                </button>
+                  <button
+                    onClick={() => {
+                      if (isMuted) {
+                        setIsMuted(false);
+                        setMuteDuration(null);
+                        if (muteTimerRef.current) clearTimeout(muteTimerRef.current);
+                      } else {
+                        setMuteDuration('forever');
+                        setIsMuted(true);
+                      }
+                    }}
+                    className={cn(
+                      'text-[8px] uppercase tracking-wider px-2 py-1 border rounded font-bold transition-colors',
+                      isMuted
+                        ? 'border-destructive/30 text-destructive hover:bg-destructive/10'
+                        : 'border-primary/30 text-primary hover:bg-primary/10'
+                    )}
+                  >
+                    {isMuted ? 'Muted' : 'Active'}
+                  </button>
+                </div>
               </div>
+              {isMuted && (
+                <div className="flex items-center gap-1 pl-5">
+                  {['1h', '8h', '24h', 'forever'].map(dur => (
+                    <button
+                      key={dur}
+                      onClick={() => {
+                        setMuteDuration(dur);
+                        if (muteTimerRef.current) clearTimeout(muteTimerRef.current);
+                        if (dur !== 'forever') {
+                          const ms = dur === '1h' ? 3600000 : dur === '8h' ? 28800000 : 86400000;
+                          muteTimerRef.current = setTimeout(() => {
+                            setIsMuted(false);
+                            setMuteDuration(null);
+                          }, ms);
+                        }
+                      }}
+                      className={cn(
+                        'text-[7px] uppercase tracking-wider px-1.5 py-0.5 border transition-colors',
+                        muteDuration === dur
+                          ? 'border-primary/40 text-primary bg-primary/10'
+                          : 'border-border text-muted-foreground hover:border-primary/30'
+                      )}
+                    >
+                      {dur}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               <div className="flex items-center justify-between py-2">
                 <div className="flex items-center gap-2">
@@ -624,8 +883,4 @@ const Globe = ({ size, className }: { size?: number; className?: string }) => (
   </svg>
 );
 
-const Trash2 = ({ size, className }: { size?: number; className?: string }) => (
-  <svg width={size || 16} height={size || 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
-    <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-  </svg>
-);
+
