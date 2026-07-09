@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { AtSign, User } from 'lucide-react';
 
@@ -40,25 +40,20 @@ export const MentionInput: React.FC<MentionInputProps> = ({
     u.name.toLowerCase().includes(mentionSearch.toLowerCase())
   ).slice(0, 8);
 
-  const getMentionText = useCallback(() => {
+  useEffect(() => {
     const text = value.slice(0, cursorPosition);
     const atIndex = text.lastIndexOf('@');
-    if (atIndex === -1) return null;
-    const afterAt = text.slice(atIndex + 1);
-    if (afterAt.includes(' ')) return null;
-    return { atIndex, query: afterAt };
-  }, [value, cursorPosition]);
-
-  useEffect(() => {
-    const mention = getMentionText();
-    if (mention && mention.query !== undefined) {
-      setMentionSearch(mention.query);
-      setShowMentions(true);
-      setMentionIndex(0);
-    } else {
-      setShowMentions(false);
+    if (atIndex !== -1) {
+      const afterAt = text.slice(atIndex + 1);
+      if (!afterAt.includes(' ')) {
+        setMentionSearch(afterAt);
+        setShowMentions(true);
+        setMentionIndex(0);
+        return;
+      }
     }
-  }, [getMentionText]);
+    setShowMentions(false);
+  }, [value, cursorPosition]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -71,10 +66,11 @@ export const MentionInput: React.FC<MentionInputProps> = ({
   }, []);
 
   const insertMention = (user: MentionUser) => {
-    const mention = getMentionText();
-    if (!mention) return;
+    const text = value.slice(0, cursorPosition);
+    const atIndex = text.lastIndexOf('@');
+    if (atIndex === -1) return;
 
-    const before = value.slice(0, mention.atIndex);
+    const before = value.slice(0, atIndex);
     const after = value.slice(cursorPosition);
     const newValue = `${before}@${user.name} ${after}`;
     onChange(newValue);

@@ -114,12 +114,26 @@ export const CallUI: React.FC<CallUIProps> = ({
       "fixed inset-0 z-50 flex flex-col bg-background",
       className
     )}>
-      {/* Remote Video (full screen) */}
+      {/* Remote video background (only when video is visible) */}
       {isVideo && isVideoEnabled && (
-        <div className="absolute inset-0 bg-black">
-          <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30" />
-        </div>
+        <div className="absolute inset-0 bg-black" />
+      )}
+
+      {/* Remote Video - always mounted (carries audio even when hidden) */}
+      <video
+        ref={remoteVideoRef}
+        autoPlay
+        playsInline
+        className={cn(
+          isVideo && isVideoEnabled
+            ? "absolute inset-0 w-full h-full object-cover"
+            : "absolute w-0 h-0"
+        )}
+      />
+
+      {/* Remote video gradient overlay (only when video is visible) */}
+      {isVideo && isVideoEnabled && (
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30" />
       )}
 
       {/* Local Video (PiP overlay) */}

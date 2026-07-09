@@ -124,10 +124,24 @@ function App() {
 
   const webrtc = useWebRTC({
     onLocalStream: (stream) => {
-      if (localVideoRef.current) stream && (localVideoRef.current.srcObject = stream);
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+        if (stream) {
+          localVideoRef.current.play().catch(e => console.warn('Local video play failed:', e));
+        } else {
+          localVideoRef.current.srcObject = null;
+        }
+      }
     },
     onRemoteStream: (stream) => {
-      if (remoteVideoRef.current) stream && (remoteVideoRef.current.srcObject = stream);
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = stream;
+        if (stream) {
+          remoteVideoRef.current.play().catch(e => console.warn('Remote video play failed:', e));
+        } else {
+          remoteVideoRef.current.srcObject = null;
+        }
+      }
     },
     onConnectionState: (state) => {
       if (state === 'connected') {
