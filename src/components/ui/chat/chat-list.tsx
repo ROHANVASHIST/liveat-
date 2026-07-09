@@ -47,6 +47,11 @@ interface ChatListProps {
   roomUnreadCounts?: Record<string, number>;
   onStatusClick?: (userId: string) => void;
   statusUsers?: string[];
+  pinnedConversations?: Set<string>;
+  onPinConversation?: (id: string, name: string) => void;
+  onSetStatus?: () => void;
+  currentUserStatus?: string;
+  currentUserStatusText?: string;
 }
 
 const getRelativeTime = (date: Date): string => {
@@ -77,6 +82,11 @@ export const ChatList: React.FC<ChatListProps> = ({
   roomUnreadCounts = {},
   onStatusClick,
   statusUsers = [],
+  pinnedConversations = new Set(),
+  onPinConversation,
+  onSetStatus,
+  currentUserStatus = 'online',
+  currentUserStatusText = '',
 }) => {
   const [activeNav, setActiveNav] = useState('messages');
   const [sidebarSection, setSidebarSection] = useState<'rooms' | 'contacts'>('rooms');
@@ -154,6 +164,33 @@ export const ChatList: React.FC<ChatListProps> = ({
             {activeNav === item.id && <ChevronRight size={10} />}
           </button>
         ))}
+        
+        {/* Pinned Conversations */}
+        {pinnedConversations.size > 0 && (
+          <div className="pt-4 pb-2">
+            <div className="text-[8px] uppercase tracking-[0.3em] text-muted-foreground px-2 mb-2 opacity-50 flex items-center gap-1">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" x2="12" y1="17" y2="22" /><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" /></svg>
+              Pinned
+            </div>
+            {rooms.filter(r => pinnedConversations.has(r.id)).map(room => (
+              <button 
+                key={room.id} 
+                className="w-full flex items-center gap-3 px-3 py-2 text-[10px] uppercase tracking-widest transition-all border border-primary/20 bg-primary/5 text-primary hover:bg-primary/10"
+                onClick={() => onSelectRoom(room.id)}
+              >
+                 <Hash size={12} className="text-primary" />
+                 <span className="flex-1 text-left truncate">{room.name}</span>
+                 <button
+                   onClick={(e) => { e.stopPropagation(); onPinConversation?.(room.id, room.name); }}
+                   className="text-muted-foreground hover:text-primary"
+                 >
+                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" x2="18" y1="2" y2="9" /><path d="M2 3h20" /><path d="M21 3v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3" /><path d="M7 21h10" /><path d="M10 21V3" /><path d="M14 21V3" /></svg>
+                 </button>
+              </button>
+            ))}
+            <div className="h-px bg-border/30 mt-2" />
+          </div>
+        )}
         
         {/* Section Toggle: Rooms / Contacts */}
         <div className="pt-6">
@@ -359,12 +396,30 @@ export const ChatList: React.FC<ChatListProps> = ({
            <Avatar className="relative h-8 w-8 border border-border rounded-none overflow-hidden shrink-0">
               <AvatarImage src={currentUserData?.avatar} />
               <AvatarFallback className="bg-primary text-primary-foreground font-bold rounded-none">{currentUserData?.name ? currentUserData.name[0] : 'U'}</AvatarFallback>
+              <span className={cn(
+                "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-background",
+                currentUserStatus === 'online' ? "bg-green-500" : currentUserStatus === 'away' ? "bg-amber-500" : currentUserStatus === 'busy' ? "bg-red-500" : "bg-muted-foreground"
+              )} />
            </Avatar>
            <div className="flex-1 min-w-0">
              <p className="text-[10px] font-bold text-foreground truncate uppercase tracking-widest">{currentUserData?.name || 'You'}</p>
-             <p className="text-[8px] text-primary uppercase tracking-[0.2em] mt-0.5">Connected</p>
+             <p className="text-[8px] text-primary uppercase tracking-[0.2em] mt-0.5 flex items-center gap-1">
+               {currentUserStatusText ? (
+                 <span className="normal-case tracking-normal truncate max-w-[120px]">{currentUserStatusText}</span>
+               ) : (
+                 <>{currentUserStatus === 'online' ? 'Online' : currentUserStatus === 'away' ? 'Away' : currentUserStatus === 'busy' ? 'Busy' : 'Offline'}</>
+               )}
+             </p>
            </div>
-           <Activity size={12} className="text-muted-foreground group-hover:text-primary animate-tech-pulse shrink-0" />
+           {onSetStatus && (
+             <button
+               onClick={(e) => { e.stopPropagation(); onSetStatus(); }}
+               className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-primary border border-transparent hover:border-border transition-all shrink-0"
+               title="Set status"
+             >
+               <Activity size={10} />
+             </button>
+           )}
          </div>
       </div>
     </div>
