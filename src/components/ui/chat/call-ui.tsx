@@ -46,8 +46,6 @@ interface CallUIProps {
   onMinimize?: () => void;
   isMinimized?: boolean;
   className?: string;
-  localVideoRef?: React.RefObject<HTMLVideoElement>;
-  remoteVideoRef?: React.RefObject<HTMLVideoElement>;
 }
 
 export const CallUI: React.FC<CallUIProps> = ({
@@ -70,8 +68,6 @@ export const CallUI: React.FC<CallUIProps> = ({
   onMinimize,
   isMinimized,
   className,
-  localVideoRef,
-  remoteVideoRef,
 }) => {
   const formatDuration = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
@@ -114,19 +110,32 @@ export const CallUI: React.FC<CallUIProps> = ({
       "fixed inset-0 z-50 flex flex-col bg-background",
       className
     )}>
-      {/* Remote Video (full screen) */}
+      {/* Remote video background (only when video is visible) */}
       {isVideo && isVideoEnabled && (
-        <div className="absolute inset-0 bg-black">
-          <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30" />
-        </div>
+        <div className="absolute inset-0 bg-black" />
       )}
 
-      {/* Local Video (PiP overlay) */}
+      {/* Remote Video - Agora renders its own <video> inside this container */}
+      <div
+        id="remote-video-container"
+        className={cn(
+          isVideo && isVideoEnabled
+            ? "absolute inset-0 w-full h-full"
+            : "absolute w-0 h-0"
+        )}
+      />
+
+      {/* Remote video gradient overlay (only when video is visible) */}
       {isVideo && isVideoEnabled && (
-        <div className="absolute top-4 left-4 z-20 w-40 h-28 rounded-lg overflow-hidden border-2 border-primary/40 shadow-lg">
-          <video ref={localVideoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
-        </div>
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30" />
+      )}
+
+      {/* Local Video (PiP overlay) - Agora renders its own <video> inside this container */}
+      {isVideo && isVideoEnabled && (
+        <div
+          id="local-video-container"
+          className="absolute top-4 left-4 z-20 w-40 h-28 rounded-lg overflow-hidden border-2 border-primary/40 shadow-lg"
+        />
       )}
 
       {(!isVideo || !isVideoEnabled) && (
