@@ -1,6 +1,6 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
-import { Circle, Check, X } from 'lucide-react';
+import { Circle, Check, X, Reply } from 'lucide-react';
 
 interface UserStatusPickerProps {
   isOpen: boolean;
@@ -8,6 +8,8 @@ interface UserStatusPickerProps {
   currentStatus: string;
   currentStatusText: string;
   onSetStatus: (status: string, statusText: string) => void;
+  autoReply?: string;
+  onSetAutoReply?: (message: string) => void;
 }
 
 const STATUS_OPTIONS = [
@@ -23,14 +25,18 @@ export const UserStatusPicker: React.FC<UserStatusPickerProps> = ({
   currentStatus,
   currentStatusText,
   onSetStatus,
+  autoReply = '',
+  onSetAutoReply,
 }) => {
   const [statusText, setStatusText] = React.useState(currentStatusText);
   const [selectedStatus, setSelectedStatus] = React.useState(currentStatus);
+  const [autoReplyText, setAutoReplyText] = React.useState(autoReply);
 
   React.useEffect(() => {
     setSelectedStatus(currentStatus);
     setStatusText(currentStatusText);
-  }, [currentStatus, currentStatusText, isOpen]);
+    setAutoReplyText(autoReply);
+  }, [currentStatus, currentStatusText, autoReply, isOpen]);
 
   if (!isOpen) return null;
 
@@ -73,6 +79,22 @@ export const UserStatusPicker: React.FC<UserStatusPickerProps> = ({
               maxLength={80}
             />
           </div>
+
+          {onSetAutoReply && (
+            <div className="pt-2 border-t border-border">
+              <label className="text-[8px] uppercase tracking-widest text-muted-foreground block mb-2 flex items-center gap-1.5">
+                <Reply size={10} /> Auto-Reply (when away)
+              </label>
+              <input
+                type="text"
+                value={autoReplyText}
+                onChange={(e) => setAutoReplyText(e.target.value)}
+                placeholder="I'm away right now..."
+                className="w-full bg-background border border-border h-9 px-3 text-[10px] tracking-wider outline-none focus:border-primary/50 transition-colors"
+                maxLength={120}
+              />
+            </div>
+          )}
         </div>
 
         <div className="px-5 py-3 border-t border-border flex justify-end gap-2">
@@ -83,7 +105,11 @@ export const UserStatusPicker: React.FC<UserStatusPickerProps> = ({
             Cancel
           </button>
           <button
-            onClick={() => { onSetStatus(selectedStatus, statusText); onClose(); }}
+            onClick={() => {
+              onSetStatus(selectedStatus, statusText);
+              if (onSetAutoReply) onSetAutoReply(autoReplyText);
+              onClose();
+            }}
             className="px-4 py-2 text-[9px] uppercase tracking-wider text-primary-foreground bg-primary border border-primary hover:bg-primary/90 transition-all"
           >
             Apply
