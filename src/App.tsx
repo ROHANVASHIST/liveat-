@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ChatWelcome, ChatRoom, ChatList, UserProfile, AnalyticsDashboard, InstallPrompt, CommandPalette, DragDropOverlay, UserStatusPicker, ReminderNotification, KeyboardShortcuts, LanguageSelector, GifPicker, TranslationPanel, AdminPanel, MessageEffects, BookmarkFolders } from './components/ui';
+import { ChatWelcome, ChatRoom, ChatList, UserProfile, AnalyticsDashboard, InstallPrompt, CommandPalette, DragDropOverlay, UserStatusPicker, ReminderNotification, KeyboardShortcuts, LanguageSelector, GifPicker, TranslationPanel, AdminPanel, MessageEffects, BookmarkFolders, TtsButton, WorkspaceSwitcher, QuickReplies, ShareContact, StickerPicker, Skeleton, MessageSkeleton, ChatListSkeleton, AiImageGen, ChatStats } from './components/ui';
 import { Button } from './components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './components/ui/dialog';
 import { Input } from './components/ui/input';
 import { ForwardMessageDialog } from './components/ui/chat/message-actions';
 import { ThreadPanel } from './components/ui/chat/thread-panel';
+import { SearchModal } from './components/ui/features';
 import { 
   Users,
   X
@@ -265,6 +266,19 @@ function App() {
   const [showBookmarkFolders, setShowBookmarkFolders] = useState(false);
   const [messageEffect, setMessageEffect] = useState<'none' | 'rainbow' | 'fire' | 'glitch'>('none');
   const { playMessageSent, playMessageReceived } = useSounds();
+
+  // 11 new features state
+  const [accounts] = useState([{ id: '1', name: currentUser, email: currentUserEmail || 'user@liveat.io', avatar: currentUserAvatar }]);
+  const [activeAccountId, setActiveAccountId] = useState('1');
+  const [showWorkspaceSwitcher, setShowWorkspaceSwitcher] = useState(false);
+  const [showQuickReplies, setShowQuickReplies] = useState(false);
+  const [showShareContact, setShowShareContact] = useState(false);
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [showAiImageGen, setShowAiImageGen] = useState(false);
+  const [showChatStats, setShowChatStats] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [searchResults, setSearchResults] = useState<Message[] | null>(null);
+  const [isLoadingSkeleton, setIsLoadingSkeleton] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -1274,6 +1288,51 @@ function App() {
     setSavedMessages(prev => { const next = new Set(prev); next.delete(id); return next; });
   };
 
+  // AI image generation handler
+  const handleAiGenerate = async (prompt: string): Promise<string | null> => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/ai/generate-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      });
+      if (!res.ok) throw new Error('Generation failed');
+      const data = await res.json();
+      return data.imageUrl || data.url || null;
+    } catch {
+      return null;
+    }
+  };
+
+  // Handler to insert AI generated image as a message
+  const handleInsertAiImage = (imageUrl: string) => {
+    handleSendGeneratedMedia(imageUrl);
+  };
+
+  const handleSendGeneratedMedia = async (mediaUrl: string) => {
+    if (!currentUser) return;
+    const msgPayload = {
+      type: 'message' as const,
+      content: encryptMessage(''),
+      senderId: currentUserId || currentUser,
+      senderName: currentUser,
+      roomId: activeRoomId,
+      msgType: 'image' as const,
+      mediaUrl: mediaUrl,
+    };
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(msgPayload));
+    } else {
+      messageQueueRef.current.push(msgPayload);
+      setQueuedCount(messageQueueRef.current.length);
+    }
+  };
+
+  // Search handler
+  const handleSearchResults = (results: any[]) => {
+    setSearchResults(results);
+  };
+
   if (isLoading) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-background">
@@ -1402,6 +1461,14 @@ function App() {
             hasMoreMessages={hasMoreMessages}
             loadingMore={loadingMore}
             onLoadMore={loadMoreMessages}
+            onStickerSelect={(url: string) => {
+              const emoji = url.startsWith('emoji:') ? url.slice(6) : '';
+              if (emoji) setCurrentMessage(prev => prev + emoji);
+            }}
+            onSearchClick={() => setShowSearchModal(true)}
+            onStatsClick={() => setShowChatStats(true)}
+            onQuickReplyClick={() => setShowQuickReplies(true)}
+            searchedMessages={searchResults}
           />
         )}
 
@@ -1642,6 +1709,86 @@ function App() {
           </button>
         </div>
       )}
+
+      {/* Workspace Switcher */}
+      <WorkspaceSwitcher
+        accounts={accounts}
+        activeAccountId={activeAccountId}
+        onSwitchAccount={setActiveAccountId}
+        onAddAccount={() => {}}
+      />
+
+      {/* Quick Replies */}
+      <QuickReplies
+        isOpen={showQuickReplies}
+        onClose={() => setShowQuickReplies(false)}
+        onSelect={(text) => {
+          setCurrentMessage(text);
+          setShowQuickReplies(false);
+        }}
+      />
+
+      {/* Share Contact */}
+      <ShareContact
+        isOpen={showShareContact}
+        onClose={() => setShowShareContact(false)}
+        users={users.map(u => ({ id: u.id, name: u.name, avatar: u.avatar, email: u.email }))}
+        onShare={(userId) => {
+          const user = users.find(u => u.id === userId);
+          if (user) {
+            const msgPayload = {
+              type: 'message' as const,
+              content: encryptMessage(`👤 Contact: ${user.name} (${user.email || 'no email'})`),
+              senderId: currentUserId || currentUser,
+              senderName: currentUser,
+              roomId: activeRoomId,
+              msgType: 'text' as const,
+            };
+            if (ws?.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify(msgPayload));
+            }
+          }
+          setShowShareContact(false);
+        }}
+      />
+
+      {/* Sticker Picker */}
+      <StickerPicker
+        isOpen={showStickerPicker}
+        onClose={() => setShowStickerPicker(false)}
+        onSelect={(url) => {
+          if (url.startsWith('emoji:')) {
+            setCurrentMessage(prev => prev + url.slice(6));
+          } else {
+            setCurrentMessage(prev => prev + ` ![sticker](${url}) `);
+          }
+          setShowStickerPicker(false);
+        }}
+      />
+
+      {/* AI Image Generation */}
+      <AiImageGen
+        isOpen={showAiImageGen}
+        onClose={() => setShowAiImageGen(false)}
+        onGenerate={handleAiGenerate}
+        onInsert={handleInsertAiImage}
+      />
+
+      {/* Chat Statistics */}
+      <ChatStats
+        isOpen={showChatStats}
+        onClose={() => setShowChatStats(false)}
+        messages={messages}
+        currentUserId={currentUserId || currentUser}
+      />
+
+      {/* Advanced Search Modal */}
+      <SearchModal
+        isOpen={showSearchModal}
+        onClose={() => setShowSearchModal(false)}
+        messages={messages}
+        onSearchResults={handleSearchResults}
+      />
     </div>
   );
 }
