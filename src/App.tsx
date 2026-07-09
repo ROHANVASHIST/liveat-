@@ -13,7 +13,7 @@ import { Avatar, AvatarFallback, AvatarImage } from './components/ui/avatar';
 import { polishText, summarizeChat, generateAIResponse } from './lib/ai';
 import { encryptMessage, decryptMessage } from './lib/encryption';
 import { CallUI, useCallTimer } from './components/ui/chat/call-ui';
-import { useWebRTC } from './lib/webrtc';
+import { useAgora } from './lib/agora';
 import { StatusViewer } from './components/ui/chat/status-viewer';
 
 const supabase = createClient(
@@ -106,12 +106,19 @@ function App() {
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [isCallMinimized, setIsCallMinimized] = useState(false);
   const [callId, setCallId] = useState<string>('');
-  const [remoteOffer, setRemoteOffer] = useState<any>(null);
+  const [pendingChannel, setPendingChannel] = useState<string>('');
   const [callConnected, setCallConnected] = useState(false);
   const callTimer = useCallTimer();
 
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const agora = useAgora({
+    onRemoteTrackReady: (userId, mediaType) => {
+      agora.playRemoteTrack(userId, mediaType);
+    },
+    onError: (error) => {
+      console.error('Agora error:', error);
+      handleEndCall();
+    },
+  });
 
   // Forward state
   const [forwardDialogOpen, setForwardDialogOpen] = useState(false);
@@ -121,38 +128,6 @@ function App() {
     const sorted = [uid1, uid2].sort();
     return `dm_${sorted[0]}_${sorted[1]}`;
   };
-
-  const webrtc = useWebRTC({
-    onLocalStream: (stream) => {
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-        if (stream) {
-          localVideoRef.current.play().catch(e => console.warn('Local video play failed:', e));
-        } else {
-          localVideoRef.current.srcObject = null;
-        }
-      }
-    },
-    onRemoteStream: (stream) => {
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = stream;
-        if (stream) {
-          remoteVideoRef.current.play().catch(e => console.warn('Remote video play failed:', e));
-        } else {
-          remoteVideoRef.current.srcObject = null;
-        }
-      }
-    },
-    onConnectionState: (state) => {
-      if (state === 'connected') {
-        setIsCallMinimized(false);
-      }
-    },
-    onError: (error) => {
-      console.error('WebRTC error:', error);
-      handleEndCall();
-    },
-  });
 
   // Status/stories state
   const [isStatusViewerOpen, setIsStatusViewerOpen] = useState(false);
@@ -468,7 +443,7 @@ function App() {
         case 'call:incoming':
           setIsVideoCall(data.callType === 'video');
           setCallDirection('incoming');
-          setCallId(data.callId);
+          setPendingChannel(data.channelName || '');
           setIsCallOpen(true);
           setIsMuted(false);
           setIsVideoEnabled(data.callType === 'video');
@@ -476,41 +451,27 @@ function App() {
           setIsCallMinimized(false);
           setCallConnected(false);
           break;
-        case 'call:offer':
-          setRemoteOffer({ callerId: data.userId || data.callerId, offer: data.data, callType: data.callType });
-          if (data.callId && data.callId !== 'pending') {
-            setCallId(data.callId);
-          }
-          break;
-        case 'call:initiated':
-          setCallId(data.callId);
-          webrtc.updateCallId(data.callId);
-          break;
         case 'call:accepted':
           setCallConnected(true);
           callTimer.start();
           break;
         case 'call:rejected':
-          webrtc.cleanup();
+          agora.leaveChannel();
           setIsCallOpen(false);
           setCallId('');
+          setPendingChannel('');
           setCallConnected(false);
           callTimer.stop();
           setIsCallMinimized(false);
           break;
         case 'call:ended':
-          webrtc.cleanup();
+          agora.leaveChannel();
           setIsCallOpen(false);
           setCallId('');
+          setPendingChannel('');
           setCallConnected(false);
           callTimer.stop();
           setIsCallMinimized(false);
-          break;
-        case 'call:answer':
-          if (data.data) webrtc.handleRemoteDescription(data.data);
-          break;
-        case 'call:ice-candidate':
-          if (data.data) webrtc.handleIceCandidate(data.data);
           break;
         case 'typing:start':
           if (data.userId !== (currentUserId || currentUser)) {
@@ -746,45 +707,61 @@ function App() {
     setIsVideoEnabled(video);
     setIsSpeakerOn(false);
     setIsCallMinimized(false);
-    setCallId('pending');
     setCallConnected(false);
-    await webrtc.startCall(video, ws, activeChatUserId, currentUserId || currentUser, currentUser);
+
+    const channel = `call_${(currentUserId || currentUser)}_${activeChatUserId}_${Date.now()}`;
+    setCallId(channel);
+
+    await agora.joinChannel(channel, video);
+
+    ws.send(JSON.stringify({
+      type: 'call:offer',
+      targetId: activeChatUserId,
+      channelName: channel,
+      userId: currentUserId || currentUser,
+      callerName: currentUser,
+      callType: video ? 'video' : 'audio',
+    }));
   };
 
   const handleAcceptCall = async () => {
-    if (!ws || !remoteOffer || !callId) return;
-    const isVideo = isVideoCall;
+    if (!ws || !pendingChannel) return;
     setIsCallMinimized(false);
-    const callerId = remoteOffer.callerId || '';
-    const offer = remoteOffer.offer;
-    await webrtc.acceptCall(ws, callId, callerId, currentUserId || currentUser, offer, isVideo);
+    setCallId(pendingChannel);
+
+    await agora.joinChannel(pendingChannel, isVideoCall);
     setCallConnected(true);
     callTimer.start();
-    setRemoteOffer(null);
+
+    ws.send(JSON.stringify({
+      type: 'call:accept',
+      targetId: callId.split('_')[2] || '',
+      callId: pendingChannel,
+      userId: currentUserId || currentUser,
+    }));
+
+    setPendingChannel('');
   };
 
   const handleEndCall = () => {
+    agora.leaveChannel();
     if (ws && callId) {
-      webrtc.endCall(ws, callId, currentUserId || currentUser);
-    } else {
-      webrtc.cleanup();
+      ws.send(JSON.stringify({ type: 'call:end', callId, userId: currentUserId || currentUser }));
     }
     setIsCallOpen(false);
     setCallId('');
-    setRemoteOffer(null);
+    setPendingChannel('');
     setCallConnected(false);
     callTimer.stop();
     setIsCallMinimized(false);
   };
 
   const handleToggleMute = () => {
-    const result = webrtc.toggleMute();
-    if (result !== null) setIsMuted(!result);
+    setIsMuted(agora.toggleMic());
   };
 
   const handleToggleVideo = () => {
-    const result = webrtc.toggleVideo();
-    if (result !== null) setIsVideoEnabled(!result);
+    setIsVideoEnabled(agora.toggleCamera());
   };
 
   const handleToggleSpeaker = () => setIsSpeakerOn(s => !s);
@@ -1180,8 +1157,6 @@ function App() {
         callConnected={callConnected}
         onMinimize={() => setIsCallMinimized(!isCallMinimized)}
         isMinimized={isCallMinimized}
-        localVideoRef={localVideoRef}
-        remoteVideoRef={remoteVideoRef}
       />
 
       {/* Drag & Drop Overlay */}

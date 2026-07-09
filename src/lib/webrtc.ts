@@ -46,7 +46,7 @@ export function useWebRTC(callbacks: WebRTCCallbacks) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
-        video: video ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false,
+        video: video ? { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } : false,
       });
       localStreamRef.current = stream;
       callbacks.onLocalStream(stream);
