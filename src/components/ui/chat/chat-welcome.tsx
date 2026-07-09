@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { cn } from '@/lib/utils';
 import { Button } from '../button';
 import { Input } from '../input';
 import { Card } from '../card';
@@ -23,6 +24,7 @@ interface ChatWelcomeProps {
   onJoin: (username: string) => void;
   onGoogleLogin: () => void;
   onEmailAuth: (email: string, password: string, name: string, isSignup: boolean) => Promise<void>;
+  onPasswordReset?: (email: string) => Promise<void>;
   isLoading: boolean;
   onUsernameChange: (name: string) => void;
   currentUser: string;
@@ -243,13 +245,16 @@ function AnimatedCounter({ value, suffix = '' }: { value: string; suffix?: strin
   return <span ref={ref}>{display}</span>;
 }
 
-export function ChatWelcome({ onJoin, onGoogleLogin, onEmailAuth, isLoading, onUsernameChange, currentUser }: ChatWelcomeProps) {
+export function ChatWelcome({ onJoin, onGoogleLogin, onEmailAuth, onPasswordReset, isLoading, onUsernameChange, currentUser }: ChatWelcomeProps) {
   const [joinUsername, setJoinUsername] = useState(currentUser || '');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [authError, setAuthError] = useState('');
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetMessage, setResetMessage] = useState('');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
 
@@ -834,6 +839,13 @@ export function ChatWelcome({ onJoin, onGoogleLogin, onEmailAuth, isLoading, onU
                       />
                     </div>
 
+                    <button
+                      onClick={() => { setShowResetPassword(true); setResetEmail(email); setResetMessage(''); }}
+                      className="text-[9px] uppercase tracking-widest text-primary/60 hover:text-primary ml-auto -mt-2 mb-2 font-bold transition-colors"
+                    >
+                      Forgot password?
+                    </button>
+
                     {authError && (
                       <div className="flex items-center gap-2 p-3 border border-destructive/30 bg-destructive/10">
                         <AlertTriangle className="h-4 w-4 text-destructive" />
@@ -979,6 +991,61 @@ export function ChatWelcome({ onJoin, onGoogleLogin, onEmailAuth, isLoading, onU
                   </TabsContent>
                 </div>
               </Tabs>
+
+              {/* Password Reset Overlay */}
+              {showResetPassword && (
+                <div className="absolute inset-0 bg-background/95 backdrop-blur-md z-10 p-6 flex flex-col justify-center">
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-bold uppercase tracking-widest text-foreground">Reset Password</h3>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                      Enter your email to receive a password reset link.
+                    </p>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground ml-1">Email</label>
+                      <Input
+                        type="email"
+                        placeholder="you@company.com"
+                        value={resetEmail}
+                        onChange={(e) => setResetEmail(e.target.value)}
+                        className="tech-input"
+                      />
+                    </div>
+                    {resetMessage && (
+                      <div className={cn(
+                        "flex items-center gap-2 p-3 border",
+                        resetMessage.includes('sent') ? "border-emerald-500/30 bg-emerald-500/10" : "border-destructive/30 bg-destructive/10"
+                      )}>
+                        {resetMessage.includes('sent') ? <CheckCircle className="h-4 w-4 text-emerald-500" /> : <AlertTriangle className="h-4 w-4 text-destructive" />}
+                        <p className={cn("text-xs", resetMessage.includes('sent') ? "text-emerald-500" : "text-destructive")}>{resetMessage}</p>
+                      </div>
+                    )}
+                    <Button
+                      onClick={async () => {
+                        if (!resetEmail.trim()) { setResetMessage('Please enter your email'); return; }
+                        setResetMessage('');
+                        if (onPasswordReset) {
+                          try {
+                            await onPasswordReset(resetEmail);
+                            setResetMessage('Reset link sent! Check your email.');
+                          } catch (err: any) {
+                            setResetMessage(err?.message || 'Failed to send reset link');
+                          }
+                        }
+                      }}
+                      className="tech-btn w-full h-12"
+                    >
+                      <Send className="h-4 w-4 mr-2" />
+                      Send Reset Link
+                    </Button>
+                    <button
+                      onClick={() => { setShowResetPassword(false); setResetMessage(''); }}
+                      className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-foreground w-full text-center font-bold transition-colors"
+                    >
+                      Back to Sign In
+                    </button>
+                  </div>
+                </div>
+              )}
             </Card>
 
             <div className="mt-8 flex items-center justify-center gap-6 flex-wrap">
