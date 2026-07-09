@@ -14,9 +14,16 @@ import {
   Copy,
   Image,
   Paperclip,
-  Edit2
+  Edit2,
+  Languages,
+  Bookmark,
+  BookmarkCheck,
+  Clock
 } from 'lucide-react';
 import { LinkPreviewInline } from './link-preview';
+import { ReactionBar } from './reaction-bar';
+import { extractCodeBlocks } from './code-block';
+import { translateMessage } from '@/lib/ai';
 
 interface Message {
   id: string;
@@ -54,16 +61,35 @@ interface MessageProps {
   onReply?: () => void;
   isReplying?: boolean;
   onForward?: () => void;
+  onTranslate?: (messageId: string, content: string) => void;
+  onSave?: (messageId: string, content: string, senderName: string, roomId: string) => void;
+  isSaved?: boolean;
+  onRemind?: (messageId: string, content: string, senderName: string) => void;
 }
 
-export const Message: React.FC<MessageProps> = ({ message, currentUser, onReaction, onPin, onReply, isReplying, onForward }) => {
+export const Message: React.FC<MessageProps> = ({ message, currentUser, onReaction, onPin, onReply, isReplying, onForward, onTranslate, onSave, isSaved, onRemind }) => {
   const isSelf = message.senderId === currentUser.id;
   const [showReactions, setShowReactions] = useState(false);
+  const [showTranslateMenu, setShowTranslateMenu] = useState(false);
+  const [translatedText, setTranslatedText] = useState<string | null>(null);
+  const [isTranslating, setIsTranslating] = useState(false);
 
   const reactions = ['👍', '❤️', '😂', '😮', '😢', '😡'];
   const isAI = (message.senderName || '').toLowerCase().includes('agent') ||
                (message.senderName || '').toLowerCase().includes('ai') ||
                message.senderName === 'General';
+
+  const handleTranslate = useCallback(async (lang: string) => {
+    if (translatedText) {
+      setTranslatedText(null);
+      return;
+    }
+    setIsTranslating(true);
+    const result = await translateMessage(message.content, lang);
+    setTranslatedText(result);
+    setIsTranslating(false);
+    setShowTranslateMenu(false);
+  }, [message.content, translatedText]);
 
   const handleCopy = useCallback(async () => {
     try {
@@ -78,6 +104,14 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
       document.execCommand('copy');
       document.body.removeChild(textarea);
     }
+  }, [message.content]);
+
+  const renderContent = useCallback(() => {
+    const { parts } = extractCodeBlocks(message.content);
+    if (parts.length === 1 && typeof parts[0] === 'string') {
+      return parts[0] as string;
+    }
+    return <>{parts.map((part, i) => typeof part === 'string' ? <span key={i}>{part}</span> : part)}</>;
   }, [message.content]);
 
   const handleDownload = useCallback(() => {
@@ -211,6 +245,45 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
                 <Forward size={10} />
               </button>
               <button
+                onClick={() => onSave?.(message.id, message.content, message.senderName, '')}
+                className={cn(
+                  "h-6 px-1.5 bg-background border transition-colors flex items-center gap-1",
+                  isSaved ? "border-primary text-primary" : "border-border text-foreground hover:border-primary"
+                )}
+              >
+                {isSaved ? <BookmarkCheck size={10} /> : <Bookmark size={10} />}
+              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setShowTranslateMenu(!showTranslateMenu)}
+                  className="h-6 px-1.5 bg-background border border-border text-foreground hover:border-primary transition-colors flex items-center gap-1"
+                >
+                  <Languages size={10} />
+                </button>
+                {showTranslateMenu && (
+                  <div className={cn(
+                    "absolute top-full mt-1 bg-background border border-border shadow-lg z-50 py-1 min-w-[120px]",
+                    isSelf ? "right-0" : "left-0"
+                  )}>
+                    {['en', 'es', 'fr', 'de', 'ja', 'zh', 'ar', 'pt'].map((lang) => (
+                      <button
+                        key={lang}
+                        onClick={() => { handleTranslate(lang); setShowTranslateMenu(false); }}
+                        className="w-full text-left px-3 py-1.5 text-[9px] uppercase tracking-wider text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-colors"
+                      >
+                        {lang === 'en' ? 'English' : lang === 'es' ? 'Spanish' : lang === 'fr' ? 'French' : lang === 'de' ? 'German' : lang === 'ja' ? 'Japanese' : lang === 'zh' ? 'Chinese' : lang === 'ar' ? 'Arabic' : 'Portuguese'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => onRemind?.(message.id, message.content, message.senderName)}
+                className="h-6 px-1.5 bg-background border border-border text-foreground hover:border-primary transition-colors flex items-center gap-1"
+              >
+                <Clock size={10} />
+              </button>
+              <button
                 onClick={handleCopy}
                 className="h-6 px-1.5 bg-background border border-border text-foreground hover:border-primary transition-colors flex items-center gap-1"
               >
@@ -257,8 +330,24 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
                   "text-[13px] leading-relaxed tracking-wider whitespace-pre-wrap break-words",
                   isSelf ? "font-medium text-primary-foreground" : "text-foreground"
                 )}>
-                  {message.content}
+                  {renderContent()}
                 </p>
+                {translatedText && (
+                  <div className="mt-2 pt-2 border-t border-primary/20">
+                    <p className="text-[10px] leading-relaxed tracking-wider text-primary/80 italic">
+                      {translatedText}
+                    </p>
+                    <button
+                      onClick={() => setTranslatedText(null)}
+                      className="text-[7px] uppercase tracking-widest text-muted-foreground hover:text-primary mt-1"
+                    >
+                      Show original
+                    </button>
+                  </div>
+                )}
+                {isTranslating && (
+                  <p className="text-[9px] text-primary animate-pulse mt-1">Translating...</p>
+                )}
                 {/* Link Preview */}
                 <LinkPreviewInline text={message.content} />
               </>
@@ -293,25 +382,7 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
               </div>
             </div>
 
-            {showReactions && (
-              <div className={cn(
-                "absolute -top-10 bg-background border border-primary/40 p-1 flex gap-1 z-50 shadow-[0_0_20px_rgba(0,229,255,0.1)]",
-                isSelf ? "right-0" : "left-0"
-              )}>
-                {reactions.map((emoji) => (
-                  <button
-                    key={emoji}
-                    onClick={() => {
-                      onReaction?.(emoji);
-                      setShowReactions(false);
-                    }}
-                    className="h-8 w-8 text-sm hover:bg-primary/10 transition-colors flex items-center justify-center border border-transparent hover:border-primary/20"
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
-            )}
+            <ReactionBar onReact={(emoji) => { onReaction?.(emoji); setShowReactions(false); }} isSelf={isSelf} show={showReactions} />
 
             {/* Display Subscript Reactions */}
             {message.reactions && message.reactions.length > 0 && (

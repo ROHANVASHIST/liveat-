@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ChatWelcome, ChatRoom, ChatList, UserProfile, AnalyticsDashboard, InstallPrompt, CommandPalette } from './components/ui';
+import { ChatWelcome, ChatRoom, ChatList, UserProfile, AnalyticsDashboard, InstallPrompt, CommandPalette, DragDropOverlay, UserStatusPicker, ReminderNotification } from './components/ui';
 import { Button } from './components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './components/ui/dialog';
 import { Input } from './components/ui/input';
+import { ForwardMessageDialog } from './components/ui/chat/message-actions';
 import { 
   Users 
 } from 'lucide-react';
@@ -12,6 +13,7 @@ import { Avatar, AvatarFallback, AvatarImage } from './components/ui/avatar';
 import { polishText, summarizeChat, generateAIResponse } from './lib/ai';
 import { encryptMessage, decryptMessage } from './lib/encryption';
 import { CallUI, useCallTimer } from './components/ui/chat/call-ui';
+import { useWebRTC } from './lib/webrtc';
 import { StatusViewer } from './components/ui/chat/status-viewer';
 
 const supabase = createClient(
@@ -103,7 +105,40 @@ function App() {
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [isCallMinimized, setIsCallMinimized] = useState(false);
+  const [callId, setCallId] = useState<string>('');
+  const [remoteOffer, setRemoteOffer] = useState<any>(null);
+  const [callConnected, setCallConnected] = useState(false);
   const callTimer = useCallTimer();
+
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+
+  // Forward state
+  const [forwardDialogOpen, setForwardDialogOpen] = useState(false);
+  const [forwardMessage, setForwardMessage] = useState<any>(null);
+
+  const getDMRoomId = (uid1: string, uid2: string) => {
+    const sorted = [uid1, uid2].sort();
+    return `dm_${sorted[0]}_${sorted[1]}`;
+  };
+
+  const webrtc = useWebRTC({
+    onLocalStream: (stream) => {
+      if (localVideoRef.current) stream && (localVideoRef.current.srcObject = stream);
+    },
+    onRemoteStream: (stream) => {
+      if (remoteVideoRef.current) stream && (remoteVideoRef.current.srcObject = stream);
+    },
+    onConnectionState: (state) => {
+      if (state === 'connected') {
+        setIsCallMinimized(false);
+      }
+    },
+    onError: (error) => {
+      console.error('WebRTC error:', error);
+      handleEndCall();
+    },
+  });
 
   // Status/stories state
   const [isStatusViewerOpen, setIsStatusViewerOpen] = useState(false);
@@ -113,6 +148,17 @@ function App() {
   // Unread count state
   const [roomUnreadCounts, setRoomUnreadCounts] = useState<Record<string, number>>({});
   const [chatWallpaper, setChatWallpaper] = useState<string | null>(() => localStorage.getItem('chat-wallpaper'));
+
+  // New features state
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const typingTimeoutRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [savedMessages, setSavedMessages] = useState<Set<string>>(new Set());
+  const [pinnedConversations, setPinnedConversations] = useState<Set<string>>(new Set());
+  const [userStatus, setUserStatus] = useState<string>('online');
+  const [userStatusText, setUserStatusText] = useState<string>('');
+  const [showStatusPicker, setShowStatusPicker] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [currentReminder, setCurrentReminder] = useState<{ messageId: string; content: string; senderName: string; roomId: string } | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -327,6 +373,8 @@ function App() {
             isSelf: data.senderId === (currentUserId || currentUser),
             type: data.msgType as 'text' | 'image' | 'file',
             mediaUrl: data.mediaUrl,
+            replyTo: data.replyTo,
+            isForwarded: data.isForwarded,
           }]);
           // Track unread counts for non-self messages in non-active rooms
           if (data.senderId !== (currentUserId || currentUser) && data.roomId !== activeRoomId) {
@@ -346,10 +394,20 @@ function App() {
             isSelf: msg.senderId === (currentUserId || currentUser),
             type: msg.msgType as 'text' | 'image' | 'file',
             mediaUrl: msg.mediaUrl,
+            replyTo: msg.replyTo,
           })));
           break;
         case 'user_count':
           setOnlineUsers(data.count);
+          break;
+        case 'online_users':
+          setUsers((prev) => {
+            const onlineIds = new Set(data.users.map((u: any) => u.id));
+            return prev.map(u => ({
+              ...u,
+              status: u.id === 'ai-concierge-node' ? 'online' as const : (onlineIds.has(u.id) ? 'online' as const : 'offline' as const),
+            }));
+          });
           break;
         case 'user_joined':
           setUsers((prev) => {
@@ -367,7 +425,7 @@ function App() {
           });
           break;
         case 'user_left':
-          setUsers((prev) => prev.filter(u => u.id !== data.userId));
+          setUsers((prev) => prev.map(u => u.id === data.userId ? { ...u, status: 'offline' as const } : u));
           break;
         case 'room_created':
           setRooms((prev) => [
@@ -393,10 +451,102 @@ function App() {
             return m;
           }));
           break;
+        case 'call:incoming':
+          setIsVideoCall(data.callType === 'video');
+          setCallDirection('incoming');
+          setCallId(data.callId);
+          setIsCallOpen(true);
+          setIsMuted(false);
+          setIsVideoEnabled(data.callType === 'video');
+          setIsSpeakerOn(false);
+          setIsCallMinimized(false);
+          setCallConnected(false);
+          break;
+        case 'call:offer':
+          setRemoteOffer({ callerId: data.userId || data.callerId, offer: data.data, callType: data.callType });
+          if (data.callId && data.callId !== 'pending') {
+            setCallId(data.callId);
+          }
+          break;
+        case 'call:initiated':
+          setCallId(data.callId);
+          webrtc.updateCallId(data.callId);
+          break;
+        case 'call:accepted':
+          setCallConnected(true);
+          callTimer.start();
+          break;
+        case 'call:rejected':
+          webrtc.cleanup();
+          setIsCallOpen(false);
+          setCallId('');
+          setCallConnected(false);
+          callTimer.stop();
+          setIsCallMinimized(false);
+          break;
+        case 'call:ended':
+          webrtc.cleanup();
+          setIsCallOpen(false);
+          setCallId('');
+          setCallConnected(false);
+          callTimer.stop();
+          setIsCallMinimized(false);
+          break;
+        case 'call:answer':
+          if (data.data) webrtc.handleRemoteDescription(data.data);
+          break;
+        case 'call:ice-candidate':
+          if (data.data) webrtc.handleIceCandidate(data.data);
+          break;
+        case 'typing:start':
+          if (data.userId !== (currentUserId || currentUser)) {
+            setTypingUsers(prev => prev.includes(data.userId) ? prev : [...prev, data.userId]);
+            if (typingTimeoutRef.current[data.userId]) {
+              clearTimeout(typingTimeoutRef.current[data.userId]);
+            }
+            typingTimeoutRef.current[data.userId] = setTimeout(() => {
+              setTypingUsers(prev => prev.filter(id => id !== data.userId));
+            }, 3000);
+          }
+          break;
+        case 'typing:stop':
+          setTypingUsers(prev => prev.filter(id => id !== data.userId));
+          if (typingTimeoutRef.current[data.userId]) {
+            clearTimeout(typingTimeoutRef.current[data.userId]);
+          }
+          break;
+        case 'user:status':
+          setUsers(prev => prev.map(u =>
+            u.id === data.userId ? { ...u, status: data.status as any } : u
+          ));
+          break;
+        case 'message:saved':
+          setSavedMessages(prev => new Set(prev).add(data.messageId));
+          break;
+        case 'message:unsaved':
+          setSavedMessages(prev => { const next = new Set(prev); next.delete(data.messageId); return next; });
+          break;
+        case 'message:reminder':
+          setCurrentReminder({ messageId: data.messageId, content: data.content, senderName: data.senderName, roomId: data.roomId });
+          break;
+        case 'pinned:conversations':
+          setPinnedConversations(new Set((data.conversations || []).map((c: any) => c.conversationId)));
+          break;
+        case 'user:current_status':
+          if (data.status) setUserStatus(data.status);
+          if (data.statusText !== undefined) setUserStatusText(data.statusText);
+          break;
       }
     };
 
     setWs(socket);
+
+    // Request initial state for new features
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'init:saved' }));
+      socket.send(JSON.stringify({ type: 'init:pinned' }));
+      socket.send(JSON.stringify({ type: 'init:status' }));
+    }
 
     return () => {
       socket.close();
@@ -464,19 +614,6 @@ function App() {
     const content = currentMessage.trim() || (pendingFile ? pendingFile.name : '');
     const isAINode = activeChatUserId === 'ai-concierge-node';
 
-    const message: Message = {
-      id: Date.now().toString(),
-      senderId: currentUserId || currentUser,
-      senderName: currentUser,
-      content,
-      timestamp: new Date(),
-      isSelf: true,
-      type: msgType,
-      mediaUrl: mediaUrl || filePreview || undefined,
-    };
-
-    setMessages((prev) => [...prev, message]);
-
     if (!isAINode) {
       ws.send(JSON.stringify({
         type: 'message',
@@ -486,6 +623,12 @@ function App() {
         roomId: activeRoomId,
         msgType: msgType,
         mediaUrl: mediaUrl,
+        replyTo: replyToMsg ? {
+          id: replyToMsg.id,
+          content: replyToMsg.content,
+          senderName: replyToMsg.senderName,
+          type: replyToMsg.type,
+        } : undefined,
       }));
     }
 
@@ -493,6 +636,17 @@ function App() {
     setCurrentMessage('');
     setFilePreview(null);
     setPendingFile(null);
+    setReplyToMsg(null);
+
+    // Stop typing indicator
+    if (ws && activeChatUserId) {
+      ws.send(JSON.stringify({
+        type: 'typing:stop',
+        targetId: activeChatUserId,
+        roomId: activeRoomId,
+      }));
+    }
+    if (typingRef.current) clearTimeout(typingRef.current);
 
     // AI Concierge Auto-Reply
     if (isAINode && content) {
@@ -569,30 +723,139 @@ function App() {
   };
 
   // Call handlers
-  const handleStartCall = (video: boolean) => {
+  const handleStartCall = async (video: boolean) => {
+    if (!ws || !activeChatUserId) return;
     setIsVideoCall(video);
     setCallDirection('outgoing');
     setIsCallOpen(true);
     setIsMuted(false);
-    setIsVideoEnabled(true);
+    setIsVideoEnabled(video);
     setIsSpeakerOn(false);
     setIsCallMinimized(false);
-    callTimer.start();
+    setCallId('pending');
+    setCallConnected(false);
+    await webrtc.startCall(video, ws, activeChatUserId, currentUserId || currentUser, currentUser);
   };
 
-  const handleAcceptCall = () => {
+  const handleAcceptCall = async () => {
+    if (!ws || !remoteOffer || !callId) return;
+    const isVideo = isVideoCall;
+    setIsCallMinimized(false);
+    const callerId = remoteOffer.callerId || '';
+    const offer = remoteOffer.offer;
+    await webrtc.acceptCall(ws, callId, callerId, currentUserId || currentUser, offer, isVideo);
+    setCallConnected(true);
     callTimer.start();
+    setRemoteOffer(null);
   };
 
   const handleEndCall = () => {
+    if (ws && callId) {
+      webrtc.endCall(ws, callId, currentUserId || currentUser);
+    } else {
+      webrtc.cleanup();
+    }
     setIsCallOpen(false);
+    setCallId('');
+    setRemoteOffer(null);
+    setCallConnected(false);
     callTimer.stop();
     setIsCallMinimized(false);
   };
 
-  const handleToggleMute = () => setIsMuted(m => !m);
-  const handleToggleVideo = () => setIsVideoEnabled(v => !v);
+  const handleToggleMute = () => {
+    const result = webrtc.toggleMute();
+    if (result !== null) setIsMuted(!result);
+  };
+
+  const handleToggleVideo = () => {
+    const result = webrtc.toggleVideo();
+    if (result !== null) setIsVideoEnabled(!result);
+  };
+
   const handleToggleSpeaker = () => setIsSpeakerOn(s => !s);
+
+  // Typing handler
+  const typingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleMessageChange = (value: string) => {
+    setCurrentMessage(value);
+    if (!ws || !activeChatUserId) return;
+    if (typingRef.current) clearTimeout(typingRef.current);
+    ws.send(JSON.stringify({
+      type: 'typing:start',
+      targetId: activeChatUserId,
+      roomId: activeRoomId,
+    }));
+    typingRef.current = setTimeout(() => {
+      ws?.send(JSON.stringify({
+        type: 'typing:stop',
+        targetId: activeChatUserId,
+        roomId: activeRoomId,
+      }));
+    }, 2000);
+  };
+
+  // Save message
+  const handleSaveMessage = (messageId: string, content: string, senderName: string, roomId: string) => {
+    if (!ws) return;
+    if (savedMessages.has(messageId)) {
+      ws.send(JSON.stringify({ type: 'message:unsave', messageId }));
+    } else {
+      ws.send(JSON.stringify({ type: 'message:save', messageId, content, senderName, roomId }));
+    }
+  };
+
+  // Remind message
+  const handleRemindMessage = (messageId: string, content: string, senderName: string) => {
+    if (!ws) return;
+    ws.send(JSON.stringify({ type: 'message:remind', messageId, content, senderName, roomId: activeRoomId, minutes: 5 }));
+  };
+
+  // Set user status
+  const handleSetStatus = (status: string, statusText: string) => {
+    setUserStatus(status);
+    setUserStatusText(statusText);
+    if (ws) {
+      ws.send(JSON.stringify({ type: 'user:status', status, statusText }));
+    }
+  };
+
+  // Pin conversation
+  const handlePinConversation = (id: string, name: string) => {
+    if (!ws) return;
+    if (pinnedConversations.has(id)) {
+      setPinnedConversations(prev => { const next = new Set(prev); next.delete(id); return next; });
+      ws.send(JSON.stringify({ type: 'conversation:unpin', conversationId: id }));
+    } else {
+      setPinnedConversations(prev => new Set(prev).add(id));
+      ws.send(JSON.stringify({ type: 'conversation:pin', conversationId: id, conversationName: name }));
+    }
+  };
+
+  // Drag and drop
+  useEffect(() => {
+    const handleDragOver = (e: DragEvent) => { e.preventDefault(); setIsDragging(true); };
+    const handleDragLeave = (e: DragEvent) => { e.preventDefault(); setIsDragging(false); };
+    const handleDrop = (e: DragEvent) => { e.preventDefault(); setIsDragging(false); };
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('drop', handleDrop);
+    return () => {
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('drop', handleDrop);
+    };
+  }, []);
+
+  const handleFileDrop = (file: File) => {
+    handleFileUpload(file);
+  };
+
+  const handleDismissReminder = () => setCurrentReminder(null);
+  const handleJumpToReminder = (roomId: string, messageId: string) => {
+    setCurrentReminder(null);
+    // The message should already be in the current view
+  };
 
   // Status handlers
   const handleViewStatus = () => {
@@ -742,7 +1005,7 @@ function App() {
           }}
           onSelectUser={(id) => {
             setActiveChatUserId(id);
-            setActiveRoomId('');
+            setActiveRoomId(getDMRoomId(currentUserId || currentUser, id));
             setIsSidebarOpen(false);
             setActiveNav('messages');
           }}
@@ -758,6 +1021,11 @@ function App() {
             }
           }}
           statusUsers={statuses.filter(s => !s.viewed).map(s => s.userId)}
+          pinnedConversations={pinnedConversations}
+          onPinConversation={handlePinConversation}
+          onSetStatus={() => setShowStatusPicker(true)}
+          currentUserStatus={userStatus}
+          currentUserStatusText={userStatusText}
         />
       </div>
 
@@ -769,7 +1037,7 @@ function App() {
             messages={messages}
             currentMessage={currentMessage}
             onSendMessage={handleSendMessage}
-            onMessageChange={setCurrentMessage}
+            onMessageChange={handleMessageChange}
             onFileSelect={handleFileUpload}
             onlineUsers={onlineUsers}
             currentUser={{
@@ -788,7 +1056,7 @@ function App() {
             onSummarize={handleSummarize}
             isSummarizing={isSummarizing}
             replyTo={replyToMsg}
-            onCancelReply={handleCancelReply}
+            onCancelReply={() => setReplyToMsg(null)}
             onEmojiSelect={handleEmojiSelect}
             onVoiceCall={() => handleStartCall(false)}
             onVideoCall={() => handleStartCall(true)}
@@ -796,6 +1064,13 @@ function App() {
             hasStatus={activeUserHasStatus}
             users={users.map(u => ({ id: u.id, name: u.name, avatar: u.avatar }))}
             wallpaper={chatWallpaper || undefined}
+            onReply={(msg) => { setReplyToMsg(msg); }}
+            onForward={(msg) => { setForwardMessage(msg); setForwardDialogOpen(true); }}
+            onTranslate={(id, content) => {}}
+            onSave={handleSaveMessage}
+            savedMessages={savedMessages}
+            onRemind={handleRemindMessage}
+            typingUsers={typingUsers}
           />
         )}
 
@@ -888,8 +1163,55 @@ function App() {
         isVideoEnabled={isVideoEnabled}
         isSpeakerOn={isSpeakerOn}
         callDuration={callTimer.seconds}
+        callConnected={callConnected}
         onMinimize={() => setIsCallMinimized(!isCallMinimized)}
         isMinimized={isCallMinimized}
+        localVideoRef={localVideoRef}
+        remoteVideoRef={remoteVideoRef}
+      />
+
+      {/* Drag & Drop Overlay */}
+      <DragDropOverlay isDragging={isDragging} onFileDrop={handleFileDrop} onDragEnd={() => setIsDragging(false)} />
+
+      {/* User Status Picker */}
+      <UserStatusPicker
+        isOpen={showStatusPicker}
+        onClose={() => setShowStatusPicker(false)}
+        currentStatus={userStatus}
+        currentStatusText={userStatusText}
+        onSetStatus={handleSetStatus}
+      />
+
+      {/* Message Reminder */}
+      <ReminderNotification reminder={currentReminder} onDismiss={handleDismissReminder} onJump={handleJumpToReminder} />
+
+      {/* Forward Dialog */}
+      <ForwardMessageDialog
+        isOpen={forwardDialogOpen}
+        onOpenChange={setForwardDialogOpen}
+        message={forwardMessage || { content: '', type: 'text', senderName: '' }}
+        contacts={users.map(u => ({ id: u.id, name: u.name, avatar: u.avatar }))}
+        groups={rooms.filter(r => r.type !== 'direct').map(r => ({ id: r.id, name: r.name }))}
+        onForward={(recipients) => {
+          if (!ws || !forwardMessage) return;
+          recipients.forEach(r => {
+            const targetRoomId = r.type === 'contact'
+              ? getDMRoomId(currentUserId || currentUser, r.id)
+              : r.id;
+            ws.send(JSON.stringify({
+              type: 'message',
+              content: encryptMessage(forwardMessage.content),
+              senderId: currentUserId || currentUser,
+              senderName: currentUser,
+              roomId: targetRoomId,
+              msgType: forwardMessage.type || 'text',
+              mediaUrl: forwardMessage.mediaUrl,
+              isForwarded: true,
+            }));
+          });
+          setForwardDialogOpen(false);
+          setForwardMessage(null);
+        }}
       />
 
       {/* Status Viewer */}

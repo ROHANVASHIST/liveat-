@@ -42,9 +42,12 @@ interface CallUIProps {
   isVideoEnabled: boolean;
   isSpeakerOn: boolean;
   callDuration: number;
+  callConnected: boolean;
   onMinimize?: () => void;
   isMinimized?: boolean;
   className?: string;
+  localVideoRef?: React.RefObject<HTMLVideoElement>;
+  remoteVideoRef?: React.RefObject<HTMLVideoElement>;
 }
 
 export const CallUI: React.FC<CallUIProps> = ({
@@ -63,9 +66,12 @@ export const CallUI: React.FC<CallUIProps> = ({
   isVideoEnabled,
   isSpeakerOn,
   callDuration,
+  callConnected,
   onMinimize,
   isMinimized,
   className,
+  localVideoRef,
+  remoteVideoRef,
 }) => {
   const formatDuration = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
@@ -108,11 +114,18 @@ export const CallUI: React.FC<CallUIProps> = ({
       "fixed inset-0 z-50 flex flex-col bg-background",
       className
     )}>
-      {/* Video Background */}
+      {/* Remote Video (full screen) */}
       {isVideo && isVideoEnabled && (
         <div className="absolute inset-0 bg-black">
-          <video className="w-full h-full object-cover" autoPlay muted playsInline />
+          <video ref={remoteVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30" />
+        </div>
+      )}
+
+      {/* Local Video (PiP overlay) */}
+      {isVideo && isVideoEnabled && (
+        <div className="absolute top-4 left-4 z-20 w-40 h-28 rounded-lg overflow-hidden border-2 border-primary/40 shadow-lg">
+          <video ref={localVideoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
         </div>
       )}
 
@@ -146,7 +159,7 @@ export const CallUI: React.FC<CallUIProps> = ({
         {/* Avatar */}
         <div className={cn(
           "relative mb-8",
-          callDirection === 'incoming' && callDuration === 0 && "animate-bounce"
+          callDirection === 'incoming' && !callConnected && "animate-bounce"
         )}>
           <div className={cn(
             "w-28 h-28 rounded-full border-4 flex items-center justify-center overflow-hidden",
@@ -160,7 +173,7 @@ export const CallUI: React.FC<CallUIProps> = ({
               </span>
             )}
           </div>
-          {callDirection === 'outgoing' && callDuration === 0 && (
+          {callDirection === 'outgoing' && !callConnected && (
             <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
               <span className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0s' }} />
               <span className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0.2s' }} />
@@ -174,12 +187,12 @@ export const CallUI: React.FC<CallUIProps> = ({
 
         {/* Status */}
         <p className="text-sm text-muted-foreground font-mono">
-          {callDirection === 'incoming' && callDuration === 0 ? (
+          {callDirection === 'incoming' && !callConnected ? (
             <span className="text-emerald-500 flex items-center gap-2">
               <Circle size={8} className="fill-emerald-500 animate-pulse" />
               Incoming Call...
             </span>
-          ) : callDirection === 'outgoing' && callDuration === 0 ? (
+          ) : callDirection === 'outgoing' && !callConnected ? (
             <span className="text-primary flex items-center gap-2">
               <Clock size={14} className="animate-pulse" />
               Calling...
@@ -235,7 +248,7 @@ export const CallUI: React.FC<CallUIProps> = ({
           </button>
 
           {/* Accept (incoming only) */}
-          {callDirection === 'incoming' && callDuration === 0 && (
+          {callDirection === 'incoming' && !callConnected && (
             <button
               onClick={onAccept}
               className={cn(

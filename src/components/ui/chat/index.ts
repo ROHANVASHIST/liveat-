@@ -9,3 +9,8 @@ export { CallUI, useCallTimer } from './call-ui';
 export { StatusViewer } from './status-viewer';
 export { MentionInput } from './mention-input';
 export { LinkPreview, LinkPreviewInline, extractUrls } from './link-preview';
+export { CodeBlock, extractCodeBlocks } from './code-block';
+export { ReactionBar } from './reaction-bar';
+export { DragDropOverlay } from './drag-drop-overlay';
+export { UserStatusPicker } from './user-status-picker';
+export { MessageReminder, ReminderNotification } from './message-reminder';

@@ -23,27 +23,11 @@ CREATE INDEX IF NOT EXISTS idx_messages_expires_at ON messages(expires_at);
 -- File size limit: 10MB
 -- Allowed MIME types: image/*, video/*, application/pdf, application/msword, application/vnd.openxmlformats-officedocument.*
 
--- 5. Storage policies (run after creating the bucket in Dashboard)
--- Allow authenticated uploads
-INSERT INTO storage.policies (name, bucket_id, operation, definition)
-SELECT 'Allow public uploads', 'chat-media', 'INSERT', '(true)'
-WHERE NOT EXISTS (
-  SELECT 1 FROM storage.policies WHERE name = 'Allow public uploads' AND bucket_id = 'chat-media'
-);
-
--- Allow public reads
-INSERT INTO storage.policies (name, bucket_id, operation, definition)
-SELECT 'Allow public reads', 'chat-media', 'SELECT', '(true)'
-WHERE NOT EXISTS (
-  SELECT 1 FROM storage.policies WHERE name = 'Allow public reads' AND bucket_id = 'chat-media'
-);
-
--- Allow deletes (for cleanup)
-INSERT INTO storage.policies (name, bucket_id, operation, definition)
-SELECT 'Allow service deletes', 'chat-media', 'DELETE', '(true)'
-WHERE NOT EXISTS (
-  SELECT 1 FROM storage.policies WHERE name = 'Allow service deletes' AND bucket_id = 'chat-media'
-);
+-- 5. Storage policies: Create these in Supabase Dashboard > Storage > Policies
+--    - Go to Storage > chat-media bucket > Policies
+--    - Add policy: "Allow public uploads" with INSERT for authenticated users
+--    - Add policy: "Allow public reads" with SELECT for public
+--    - Add policy: "Allow service deletes" with DELETE for authenticated users
 
 -- 6. Create a function to auto-delete expired messages
 CREATE OR REPLACE FUNCTION cleanup_expired_messages()

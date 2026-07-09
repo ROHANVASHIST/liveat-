@@ -43,3 +43,13 @@ export async function summarizeChat(messages: {sender: string, text: string}[]) 
   const prompt = `Provide a concise, professional summary of the following chat history. Highlight the main topics discussed, key decisions made, and any action items. Format it nicely with markdown.\n\nChat History:\n${history}`;
   return generateAIResponse(prompt, "You are a professional AI secretary. Provide highly accurate and useful conversation summaries.");
 }
+
+export async function translateMessage(text: string, targetLang: string) {
+  const prompt = `Translate the following text to ${targetLang}. Only return the translated text, nothing else (no explanations, no quotes).\n\nText: ${text}`;
+  return generateAIResponse(prompt, `You are a professional translator. Translate accurately to ${targetLang}.`);
+}
+
+export async function detectLanguage(text: string) {
+  const prompt = `Detect the language of the following text. Only return the language name (e.g., "Spanish", "French", "English"), nothing else.\n\nText: ${text}`;
+  return generateAIResponse(prompt, "You are a language detection expert. Return only the language name.");
+}
