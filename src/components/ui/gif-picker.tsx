@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 import { Search, X, Loader2 } from 'lucide-react';
 
-const TENOR_KEY = 'AIzaSyC3uF8P2WqoFwVjJKzLQVdFhCJx8JfL0cA';
+const TENOR_KEY = import.meta.env.VITE_TENOR_API_KEY || '';
 const TENOR_BASE = 'https://tenor.googleapis.com/v2';
 
 interface GifPickerProps {
@@ -49,7 +49,12 @@ export const GifPicker: React.FC<GifPickerProps> = ({ isOpen, onClose, onSelect 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm" onClick={onClose}>
       <div className="w-[480px] max-w-[90vw] max-h-[80vh] border border-border bg-background shadow-lg flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        {!TENOR_KEY && (
+        <div className="px-4 py-2 border-b border-destructive/30 bg-destructive/10">
+          <span className="text-[8px] uppercase tracking-widest text-destructive">GIF picker requires VITE_TENOR_API_KEY env variable</span>
+        </div>
+      )}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <span className="text-[9px] font-bold uppercase tracking-widest">GIF Picker</span>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
             <X size={14} />
