@@ -26,7 +26,7 @@ interface ChatHeaderProps {
   onSummarize?: () => void;
   isSummarizing?: boolean;
   onClearHistory?: () => void;
-  onExport?: () => void;
+  onExport?: (format?: 'txt' | 'json') => void;
   typingUserNames?: string[];
   showInfo?: boolean;
   onInfoToggle?: () => void;
@@ -202,14 +202,22 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
              <>
                <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
                <div className="absolute right-0 top-full mt-1 w-48 bg-background border border-border shadow-lg z-50">
-                 {onExport && (
-                   <button
-                     onClick={() => { onExport(); setShowMenu(false); }}
-                     className="w-full flex items-center gap-3 px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-all"
-                   >
-                     <Download size={12} /> Export Chat
-                   </button>
-                 )}
+                  {onExport && (
+                    <>
+                      <button
+                        onClick={() => { onExport('txt'); setShowMenu(false); }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-all"
+                      >
+                        <Download size={12} /> Export as TXT
+                      </button>
+                      <button
+                        onClick={() => { onExport('json'); setShowMenu(false); }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-all"
+                      >
+                        <Download size={12} /> Export as JSON
+                      </button>
+                    </>
+                  )}
                  {onClearHistory && (
                    <button
                      onClick={() => { onClearHistory(); setShowMenu(false); }}
