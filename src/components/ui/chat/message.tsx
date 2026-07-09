@@ -18,7 +18,8 @@ import {
   Languages,
   Bookmark,
   BookmarkCheck,
-  Clock
+  Clock,
+  MessageSquare
 } from 'lucide-react';
 import { LinkPreviewInline } from './link-preview';
 import { ReactionBar } from './reaction-bar';
@@ -61,18 +62,21 @@ interface MessageProps {
   onReply?: () => void;
   isReplying?: boolean;
   onForward?: () => void;
+  onOpenThread?: () => void;
   onTranslate?: (messageId: string, content: string) => void;
   onSave?: (messageId: string, content: string, senderName: string, roomId: string) => void;
   isSaved?: boolean;
   onRemind?: (messageId: string, content: string, senderName: string) => void;
+  readReceipts?: string[];
 }
 
-export const Message: React.FC<MessageProps> = ({ message, currentUser, onReaction, onPin, onReply, isReplying, onForward, onTranslate, onSave, isSaved, onRemind }) => {
+export const Message: React.FC<MessageProps> = ({ message, currentUser, onReaction, onPin, onReply, isReplying, onForward, onOpenThread, onTranslate, onSave, isSaved, onRemind, readReceipts }) => {
   const isSelf = message.senderId === currentUser.id;
   const [showReactions, setShowReactions] = useState(false);
   const [showTranslateMenu, setShowTranslateMenu] = useState(false);
   const [translatedText, setTranslatedText] = useState<string | null>(null);
   const [isTranslating, setIsTranslating] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(message.content.length > 400);
 
   const reactions = ['👍', '❤️', '😂', '😮', '😢', '😡'];
   const isAI = (message.senderName || '').toLowerCase().includes('agent') ||
@@ -106,12 +110,117 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
     }
   }, [message.content]);
 
+  const renderMarkdown = (text: string): React.ReactNode => {
+    const elements: React.ReactNode[] = [];
+    const lines = text.split('\n');
+    let inList = false;
+    let listItems: React.ReactNode[] = [];
+
+    lines.forEach((line, li) => {
+      // Headers
+      if (line.startsWith('### ')) {
+        if (inList) { elements.push(<ul key={`ul-${li}`} className="list-disc pl-4 space-y-1 my-1">{listItems}</ul>); listItems = []; inList = false; }
+        elements.push(<h3 key={li} className="text-sm font-bold uppercase tracking-wider mt-2 mb-1 text-primary">{renderInline(line.slice(4))}</h3>);
+        return;
+      }
+      if (line.startsWith('## ')) {
+        if (inList) { elements.push(<ul key={`ul-${li}`} className="list-disc pl-4 space-y-1 my-1">{listItems}</ul>); listItems = []; inList = false; }
+        elements.push(<h2 key={li} className="text-base font-bold uppercase tracking-widest mt-3 mb-1 text-primary">{renderInline(line.slice(3))}</h2>);
+        return;
+      }
+      if (line.startsWith('# ')) {
+        if (inList) { elements.push(<ul key={`ul-${li}`} className="list-disc pl-4 space-y-1 my-1">{listItems}</ul>); listItems = []; inList = false; }
+        elements.push(<h1 key={li} className="text-lg font-bold uppercase tracking-[0.2em] mt-3 mb-2 text-primary">{renderInline(line.slice(2))}</h1>);
+        return;
+      }
+      // Code block
+      if (line.startsWith('```')) {
+        if (inList) { elements.push(<ul key={`ul-${li}`} className="list-disc pl-4 space-y-1 my-1">{listItems}</ul>); listItems = []; inList = false; }
+        const codeContent: string[] = [];
+        let j = li + 1;
+        while (j < lines.length && !lines[j].startsWith('```')) { codeContent.push(lines[j]); j++; }
+        if (codeContent.length > 0) {
+          elements.push(<pre key={`code-${li}`} className="bg-muted/20 border border-border/50 p-3 my-2 text-[11px] font-mono overflow-x-auto"><code>{codeContent.join('\n')}</code></pre>);
+        }
+        return;
+      }
+      // Unordered list
+      if (line.match(/^[\s]*[-*+]\s/)) {
+        inList = true;
+        listItems.push(<li key={`li-${li}`} className="text-[12px] leading-relaxed">{renderInline(line.replace(/^[\s]*[-*+]\s/, ''))}</li>);
+        return;
+      }
+      // Ordered list
+      if (line.match(/^[\s]*\d+\.\s/)) {
+        if (inList) { elements.push(<ul key={`ul-${li}`} className="list-disc pl-4 space-y-1 my-1">{listItems}</ul>); listItems = []; inList = false; }
+        elements.push(<div key={`ol-${li}`} className="flex gap-2 text-[12px] leading-relaxed ml-4"><span className="text-primary/60">{line.match(/^[\s]*(\d+)\./)?.[1]}.</span><span>{renderInline(line.replace(/^[\s]*\d+\.\s/, ''))}</span></div>);
+        return;
+      }
+      // Blockquote
+      if (line.startsWith('> ')) {
+        if (inList) { elements.push(<ul key={`ul-${li}`} className="list-disc pl-4 space-y-1 my-1">{listItems}</ul>); listItems = []; inList = false; }
+        elements.push(<blockquote key={`bq-${li}`} className="border-l-2 border-primary/30 pl-3 my-1 text-[11px] italic text-muted-foreground">{renderInline(line.slice(2))}</blockquote>);
+        return;
+      }
+      // Horizontal rule
+      if (line.match(/^---+/)) {
+        if (inList) { elements.push(<ul key={`ul-${li}`} className="list-disc pl-4 space-y-1 my-1">{listItems}</ul>); listItems = []; inList = false; }
+        elements.push(<div key={`hr-${li}`} className="h-px bg-border/50 my-3" />);
+        return;
+      }
+      // Empty line
+      if (line.trim() === '') {
+        if (inList) { elements.push(<ul key={`ul-${li}`} className="list-disc pl-4 space-y-1 my-1">{listItems}</ul>); listItems = []; inList = false; }
+        elements.push(<br key={`br-${li}`} />);
+        return;
+      }
+      // Regular paragraph
+      if (inList) { elements.push(<ul key={`ul-${li}`} className="list-disc pl-4 space-y-1 my-1">{listItems}</ul>); listItems = []; inList = false; }
+      elements.push(<p key={`p-${li}`} className="text-[13px] leading-relaxed tracking-wider mb-1">{renderInline(line)}</p>);
+    });
+    if (inList) { elements.push(<ul key="ul-end" className="list-disc pl-4 space-y-1 my-1">{listItems}</ul>); }
+
+    return elements.length > 0 ? <>{elements}</> : text;
+  };
+
+  const renderInline = (text: string): React.ReactNode => {
+    const parts: React.ReactNode[] = [];
+    const regex = /(\*\*\*(.*?)\*\*\*|\*\*(.*?)\*\*|\*(.*?)\*|`(.*?)`|~~(.*?)~~|\[([^\]]+)\]\(([^)]+)\))/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(text.slice(lastIndex, match.index));
+      }
+      if (match[2]) { parts.push(<strong key={match.index} className="font-bold"><em>{match[2]}</em></strong>); }
+      else if (match[3]) { parts.push(<strong key={match.index} className="font-bold">{match[3]}</strong>); }
+      else if (match[4]) { parts.push(<em key={match.index} className="italic">{match[4]}</em>); }
+      else if (match[5]) { parts.push(<code key={match.index} className="bg-muted/30 border border-border/50 px-1 py-0.5 text-[11px] font-mono">{match[5]}</code>); }
+      else if (match[6]) { parts.push(<del key={match.index} className="line-through opacity-60">{match[6]}</del>); }
+      else if (match[7] && match[8]) {
+        parts.push(
+          <a key={match.index} href={match[8]} target="_blank" rel="noopener noreferrer"
+             className="text-primary underline underline-offset-2 hover:opacity-80"
+             onClick={(e) => e.stopPropagation()}>
+            {match[7]}
+          </a>
+        );
+      }
+      lastIndex = regex.lastIndex;
+    }
+    if (lastIndex < text.length) {
+      parts.push(text.slice(lastIndex));
+    }
+    return parts.length > 0 ? <>{parts}</> : text;
+  };
+
   const renderContent = useCallback(() => {
     const { parts } = extractCodeBlocks(message.content);
     if (parts.length === 1 && typeof parts[0] === 'string') {
-      return parts[0] as string;
+      return renderMarkdown(parts[0] as string);
     }
-    return <>{parts.map((part, i) => typeof part === 'string' ? <span key={i}>{part}</span> : part)}</>;
+    return <>{parts.map((part, i) => typeof part === 'string' ? <span key={i}>{renderMarkdown(part)}</span> : part)}</>;
   }, [message.content]);
 
   const handleDownload = useCallback(() => {
@@ -238,6 +347,15 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
               >
                 <Reply size={10} />
               </button>
+              {onOpenThread && (
+                <button
+                  onClick={onOpenThread}
+                  className="h-6 px-1.5 bg-background border border-border text-foreground hover:border-primary transition-colors flex items-center gap-1"
+                  title="Open thread"
+                >
+                  <MessageSquare size={10} />
+                </button>
+              )}
               <button
                 onClick={() => onForward?.()}
                 className="h-6 px-1.5 bg-background border border-border text-foreground hover:border-primary transition-colors flex items-center gap-1"
@@ -328,10 +446,22 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
               <>
                 <p className={cn(
                   "text-[13px] leading-relaxed tracking-wider whitespace-pre-wrap break-words",
-                  isSelf ? "font-medium text-primary-foreground" : "text-foreground"
+                  isSelf ? "font-medium text-primary-foreground" : "text-foreground",
+                  isCollapsed && "line-clamp-6"
                 )}>
                   {renderContent()}
                 </p>
+                {message.content.length > 400 && (
+                  <button
+                    onClick={() => setIsCollapsed(!isCollapsed)}
+                    className={cn(
+                      "text-[8px] uppercase tracking-widest mt-1 font-bold transition-colors",
+                      isSelf ? "text-primary-foreground/70 hover:text-primary-foreground" : "text-muted-foreground hover:text-primary"
+                    )}
+                  >
+                    {isCollapsed ? 'Show more ▾' : 'Show less ▴'}
+                  </button>
+                )}
                 {translatedText && (
                   <div className="mt-2 pt-2 border-t border-primary/20">
                     <p className="text-[10px] leading-relaxed tracking-wider text-primary/80 italic">
@@ -369,8 +499,13 @@ export const Message: React.FC<MessageProps> = ({ message, currentUser, onReacti
                   {message.id?.toString().substring(0, 8) || 'UNKNOWN'}
                 </span>
                 {isSelf && (
-                  <div className="flex items-center">
-                    {message.status === 'read' ? (
+                  <div className="flex items-center gap-1">
+                    {readReceipts && readReceipts.length > 0 ? (
+                      <div className="flex items-center gap-1" title={`Read by ${readReceipts.length} ${readReceipts.length === 1 ? 'person' : 'people'}`}>
+                        <CheckCheck size={10} className="text-blue-400" />
+                        <span className="text-[6px] text-blue-400/70">{readReceipts.length}</span>
+                      </div>
+                    ) : message.status === 'read' ? (
                       <CheckCheck size={10} />
                     ) : message.status === 'delivered' ? (
                       <CheckCheck size={10} className="opacity-70" />
