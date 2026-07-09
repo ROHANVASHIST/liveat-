@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ChatWelcome, ChatRoom, ChatList, UserProfile, AnalyticsDashboard, InstallPrompt, CommandPalette, DragDropOverlay, UserStatusPicker, ReminderNotification } from './components/ui';
+import { ChatWelcome, ChatRoom, ChatList, UserProfile, AnalyticsDashboard, InstallPrompt, CommandPalette, DragDropOverlay, UserStatusPicker, ReminderNotification, KeyboardShortcuts, LanguageSelector, GifPicker, TranslationPanel, AdminPanel, MessageEffects, BookmarkFolders } from './components/ui';
 import { Button } from './components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './components/ui/dialog';
 import { Input } from './components/ui/input';
 import { ForwardMessageDialog } from './components/ui/chat/message-actions';
+import { ThreadPanel } from './components/ui/chat/thread-panel';
 import { 
-  Users 
+  Users,
+  X
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { cn } from './lib/utils';
@@ -15,6 +17,8 @@ import { encryptMessage, decryptMessage } from './lib/encryption';
 import { CallUI, useCallTimer } from './components/ui/chat/call-ui';
 import { useAgora } from './lib/agora';
 import { StatusViewer } from './components/ui/chat/status-viewer';
+import { exportChatAsPdf } from './lib/pdf-export';
+import { useSounds } from './lib/sounds';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -63,6 +67,17 @@ interface ChatRoom {
   type: 'public' | 'private' | 'direct';
 }
 
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const output = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    output[i] = rawData.charCodeAt(i);
+  }
+  return output;
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState('');
   const [currentUserEmail, setCurrentUserEmail] = useState('');
@@ -91,6 +106,8 @@ function App() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [analytics, setAnalytics] = useState<any>(null);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
+  const [isLanguageSelectorOpen, setIsLanguageSelectorOpen] = useState(false);
   const [currentSentiment, setCurrentSentiment] = useState<'calm' | 'ai' | 'warning' | 'error'>('calm');
   const [isPolishing, setIsPolishing] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
@@ -124,6 +141,11 @@ function App() {
   const [forwardDialogOpen, setForwardDialogOpen] = useState(false);
   const [forwardMessage, setForwardMessage] = useState<any>(null);
 
+  // Thread state
+  const [threadParentMessage, setThreadParentMessage] = useState<Message | null>(null);
+  const [threadReplies, setThreadReplies] = useState<Message[]>([]);
+  const [isThreadOpen, setIsThreadOpen] = useState(false);
+
   const getDMRoomId = (uid1: string, uid2: string) => {
     const sorted = [uid1, uid2].sort();
     return `dm_${sorted[0]}_${sorted[1]}`;
@@ -137,6 +159,86 @@ function App() {
   // Unread count state
   const [roomUnreadCounts, setRoomUnreadCounts] = useState<Record<string, number>>({});
   const [chatWallpaper, setChatWallpaper] = useState<string | null>(() => localStorage.getItem('chat-wallpaper'));
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected' | 'reconnecting'>('disconnected');
+  const reconnectAttemptRef = useRef(0);
+
+  // Message drafts per room (localStorage)
+  const [messageDrafts, setMessageDrafts] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem('chat-drafts') || '{}'); }
+    catch { return {}; }
+  });
+
+  // Offline message queue
+  const messageQueueRef = useRef<{ content: string; senderId: string; senderName: string; roomId: string; msgType: string; mediaUrl?: string; replyTo?: any; threadId?: string }[]>([]);
+  const [queuedCount, setQueuedCount] = useState(0);
+
+  // Pagination state
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // Flush queued messages when reconnected
+  useEffect(() => {
+    if (connectionStatus === 'connected' && messageQueueRef.current.length > 0 && ws?.readyState === WebSocket.OPEN) {
+      const queue = [...messageQueueRef.current];
+      messageQueueRef.current = [];
+      setQueuedCount(0);
+      queue.forEach(msg => {
+        ws.send(JSON.stringify({ type: 'message', ...msg }));
+      });
+    }
+  }, [connectionStatus, ws]);
+
+  // Push notifications
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushSubscribed, setPushSubscribed] = useState(false);
+
+  useEffect(() => {
+    if ('Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window) {
+      setPushSupported(true);
+      Notification.requestPermission();
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+  }, []);
+
+  const subscribePush = useCallback(async () => {
+    if (!pushSupported) return;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array('BEl62iUYgUivx5kvq3ThGSWGMk2H5VfRZoOyYI1U7quAnxLkKBE1E2Wz7sJFxGmKGoSjFcCzPJjYHqD8J5vQlGQ'),
+        });
+      }
+      setPushSubscribed(true);
+      await fetch(`${API_BASE_URL}/api/push/subscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscription: sub.toJSON(), userId: currentUserId || currentUser }),
+      });
+    } catch (err) {
+      console.error('Push subscribe error:', err);
+    }
+  }, [pushSupported, currentUserId, currentUser]);
+
+  const unsubscribePush = useCallback(async () => {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await sub.unsubscribe();
+        await fetch(`${API_BASE_URL}/api/push/unsubscribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: currentUserId || currentUser }),
+        });
+      }
+      setPushSubscribed(false);
+    } catch (err) {
+      console.error('Push unsubscribe error:', err);
+    }
+  }, [currentUserId, currentUser]);
 
   // New features state
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
@@ -145,9 +247,24 @@ function App() {
   const [pinnedConversations, setPinnedConversations] = useState<Set<string>>(new Set());
   const [userStatus, setUserStatus] = useState<string>('online');
   const [userStatusText, setUserStatusText] = useState<string>('');
+  const [autoReplyMessage, setAutoReplyMessage] = useState<string>('');
   const [showStatusPicker, setShowStatusPicker] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [currentReminder, setCurrentReminder] = useState<{ messageId: string; content: string; senderName: string; roomId: string } | null>(null);
+
+  // Read receipts state
+  const [readReceipts, setReadReceipts] = useState<Record<string, string[]>>({});
+  const readTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Additional features state
+  const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showTranslationPanel, setShowTranslationPanel] = useState(false);
+  const [translationText, setTranslationText] = useState('');
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [bookmarkFolders, setBookmarkFolders] = useState<string[]>(['Bookmarks', 'Important', 'Archive']);
+  const [showBookmarkFolders, setShowBookmarkFolders] = useState(false);
+  const [messageEffect, setMessageEffect] = useState<'none' | 'rainbow' | 'fire' | 'glitch'>('none');
+  const { playMessageSent, playMessageReceived } = useSounds();
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -168,6 +285,12 @@ function App() {
       if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         setIsCommandPaletteOpen(prev => !prev);
+      }
+      if (e.key === '?' && !e.metaKey && !e.ctrlKey && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+        setIsKeyboardShortcutsOpen(prev => !prev);
+      }
+      if (e.key === 'Escape') {
+        setIsKeyboardShortcutsOpen(false);
       }
     };
     document.addEventListener('keydown', down);
@@ -328,9 +451,13 @@ function App() {
     const protocol = window.location.protocol === 'https:' || rawUrl.includes(':443') ? 'wss:' : 'ws:';
     const hostPart = rawUrl.replace(/^https?:\/\//, '');
     const wsUrl = rawUrl.startsWith('ws') ? rawUrl : `${protocol}//${hostPart}`;
+
+    setConnectionStatus('connecting');
     const socket = new WebSocket(wsUrl);
 
     socket.onopen = () => {
+      setConnectionStatus('connected');
+      reconnectAttemptRef.current = 0;
       socket.send(JSON.stringify({
         type: 'join',
         userId: currentUserId || currentUser,
@@ -353,6 +480,19 @@ function App() {
 
       switch (data.type) {
         case 'message':
+          const isThreadMsg = data.threadId;
+          if (isThreadMsg && threadParentMessage) {
+            setThreadReplies(prev => [...prev, {
+              id: data.id,
+              senderId: data.senderId,
+              senderName: data.senderName,
+              content: decryptMessage(data.content),
+              timestamp: new Date(data.timestamp),
+              isSelf: data.senderId === (currentUserId || currentUser),
+              type: 'text',
+            }]);
+            break;
+          }
           setMessages((prev) => [...prev, {
             id: data.id,
             senderId: data.senderId,
@@ -372,6 +512,19 @@ function App() {
               [data.roomId || 'unknown']: (prev[data.roomId || 'unknown'] || 0) + 1,
             }));
           }
+          // Auto-reply when away
+          if (data.senderId !== (currentUserId || currentUser) && userStatus === 'away' && autoReplyMessage && socket.readyState === WebSocket.OPEN) {
+            setTimeout(() => {
+              socket.send(JSON.stringify({
+                type: 'message',
+                content: encryptMessage(autoReplyMessage),
+                senderId: currentUserId || currentUser,
+                senderName: currentUser,
+                roomId: data.roomId || activeRoomId,
+                msgType: 'text',
+              }));
+            }, 2000);
+          }
           break;
         case 'message_history':
           setMessages(data.messages.map((msg: any) => ({
@@ -385,6 +538,26 @@ function App() {
             mediaUrl: msg.mediaUrl,
             replyTo: msg.replyTo,
           })));
+          setHasMoreMessages(data.hasMore !== false);
+          setLoadingMore(false);
+          break;
+        case 'load_more':
+          setMessages(prev => [
+            ...(data.messages || []).map((msg: any) => ({
+              id: msg.id,
+              senderId: msg.senderId,
+              senderName: msg.senderName,
+              content: decryptMessage(msg.content),
+              timestamp: new Date(msg.timestamp),
+              isSelf: msg.senderId === (currentUserId || currentUser),
+              type: msg.msgType as 'text' | 'image' | 'file',
+              mediaUrl: msg.mediaUrl,
+              replyTo: msg.replyTo,
+            })),
+            ...prev,
+          ]);
+          setHasMoreMessages(data.hasMore !== false);
+          setLoadingMore(false);
           break;
         case 'user_count':
           setOnlineUsers(data.count);
@@ -504,6 +677,12 @@ function App() {
         case 'message:reminder':
           setCurrentReminder({ messageId: data.messageId, content: data.content, senderName: data.senderName, roomId: data.roomId });
           break;
+        case 'read_receipt':
+          setReadReceipts(prev => ({
+            ...prev,
+            [data.messageId]: [...new Set([...(prev[data.messageId] || []), data.userId])],
+          }));
+          break;
         case 'pinned:conversations':
           setPinnedConversations(new Set((data.conversations || []).map((c: any) => c.conversationId)));
           break;
@@ -512,6 +691,14 @@ function App() {
           if (data.statusText !== undefined) setUserStatusText(data.statusText);
           break;
       }
+    };
+
+    socket.onclose = () => {
+      setConnectionStatus('disconnected');
+    };
+
+    socket.onerror = () => {
+      setConnectionStatus('reconnecting');
     };
 
     setWs(socket);
@@ -573,7 +760,7 @@ function App() {
   };
 
   const handleSendMessage = useCallback(async () => {
-    if ((!currentMessage.trim() && !pendingFile) || !ws || !currentUser) return;
+    if ((!currentMessage.trim() && !pendingFile) || !currentUser) return;
 
     let mediaUrl: string | undefined = undefined;
     let msgType: 'text' | 'image' | 'file' = 'text';
@@ -590,8 +777,8 @@ function App() {
     const isAINode = activeChatUserId === 'ai-concierge-node';
 
     if (!isAINode) {
-      ws.send(JSON.stringify({
-        type: 'message',
+      const msgPayload = {
+        type: 'message' as const,
         content: encryptMessage(content),
         senderId: currentUserId || currentUser,
         senderName: currentUser,
@@ -604,7 +791,16 @@ function App() {
           senderName: replyToMsg.senderName,
           type: replyToMsg.type,
         } : undefined,
-      }));
+      };
+
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(msgPayload));
+      } else {
+        // Queue for offline delivery
+        messageQueueRef.current.push(msgPayload);
+        setQueuedCount(messageQueueRef.current.length);
+        localStorage.setItem('message-queue', JSON.stringify(messageQueueRef.current));
+      }
     }
 
     analyzeSentiment(content);
@@ -770,6 +966,14 @@ function App() {
   const typingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleMessageChange = (value: string) => {
     setCurrentMessage(value);
+    // Save draft to localStorage
+    if (activeRoomId) {
+      setMessageDrafts(prev => {
+        const updated = { ...prev, [activeRoomId]: value };
+        localStorage.setItem('chat-drafts', JSON.stringify(updated));
+        return updated;
+      });
+    }
     if (!ws || !activeChatUserId) return;
     if (typingRef.current) clearTimeout(typingRef.current);
     ws.send(JSON.stringify({
@@ -786,6 +990,16 @@ function App() {
     }, 2000);
   };
 
+  // Restore draft when switching rooms
+  useEffect(() => {
+    const draft = messageDrafts[activeRoomId];
+    if (draft) {
+      setCurrentMessage(draft);
+    } else {
+      setCurrentMessage('');
+    }
+  }, [activeRoomId]);
+
   // Save message
   const handleSaveMessage = (messageId: string, content: string, senderName: string, roomId: string) => {
     if (!ws) return;
@@ -801,6 +1015,22 @@ function App() {
     if (!ws) return;
     ws.send(JSON.stringify({ type: 'message:remind', messageId, content, senderName, roomId: activeRoomId, minutes: 5 }));
   };
+
+  // Send read receipts for visible messages
+  const sendReadReceipts = (messageIds: string[]) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    messageIds.forEach(id => {
+      ws.send(JSON.stringify({ type: 'read_receipt', messageId: id, userId: currentUserId || currentUser }));
+    });
+  };
+
+  // Load earlier messages (pagination)
+  const loadMoreMessages = useCallback(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN || loadingMore) return;
+    setLoadingMore(true);
+    const earliest = messages.length > 0 ? messages[0].timestamp : new Date();
+    ws.send(JSON.stringify({ type: 'load_more', roomId: activeRoomId, before: earliest.toISOString(), limit: 50 }));
+  }, [ws, loadingMore, messages, activeRoomId]);
 
   // Set user status
   const handleSetStatus = (status: string, statusText: string) => {
@@ -837,6 +1067,42 @@ function App() {
       window.removeEventListener('drop', handleDrop);
     };
   }, []);
+
+  // Thread handlers
+  const handleOpenThread = (message: Message) => {
+    setThreadParentMessage(message);
+    setThreadReplies([]);
+    setIsThreadOpen(true);
+  };
+
+  const handleCloseThread = () => {
+    setThreadParentMessage(null);
+    setThreadReplies([]);
+    setIsThreadOpen(false);
+  };
+
+  const handleSendThreadMessage = (content: string) => {
+    if (!ws || !threadParentMessage || !content.trim()) return;
+    const threadId = threadParentMessage.id;
+    ws.send(JSON.stringify({
+      type: 'message',
+      content: encryptMessage(content),
+      senderId: currentUserId || currentUser,
+      senderName: currentUser,
+      roomId: activeRoomId,
+      msgType: 'text',
+      threadId: threadId,
+    }));
+    setThreadReplies(prev => [...prev, {
+      id: Date.now().toString(),
+      senderId: currentUserId || currentUser,
+      senderName: currentUser,
+      content,
+      timestamp: new Date(),
+      isSelf: true,
+      type: 'text',
+    }]);
+  };
 
   const handleFileDrop = (file: File) => {
     handleFileUpload(file);
@@ -927,6 +1193,19 @@ function App() {
     setIsConnected(true);
   };
 
+  const handlePasswordReset = async (email: string) => {
+    const response = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Failed to send reset link');
+    }
+  };
+
   const handleCreateRoom = () => {
     if (!newRoomName.trim()) return;
     ws?.send(JSON.stringify({
@@ -950,6 +1229,51 @@ function App() {
     setIsAddContactOpen(false);
   };
 
+  // Additional feature handlers
+  const handleGifSelect = (url: string) => {
+    setCurrentMessage(prev => prev + ` ![gif](${url}) `);
+    setShowGifPicker(false);
+  };
+
+  const handleTranslate = async (text: string, from: string, to: string): Promise<string> => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/translate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, from, to }),
+      });
+      if (!res.ok) throw new Error('Translation failed');
+      const data = await res.json();
+      return data.translatedText || data.translation || text;
+    } catch {
+      return text;
+    }
+  };
+
+  const handleExportChat = (format: 'txt' | 'json' | 'pdf') => {
+    if (format === 'pdf') {
+      exportChatAsPdf(messages, activeChatUserId 
+        ? (users.find(u => u.id === activeChatUserId)?.name || 'Direct Chat')
+        : (rooms.find(r => r.id === activeRoomId)?.name || 'Chat'));
+    }
+  };
+
+  const handleSaveToFolder = (id: string, content: string, senderName: string) => {
+    setSavedMessages(prev => new Set(prev).add(id));
+  };
+
+  const handleMoveToFolder = (id: string, folder: string) => {
+    localStorage.setItem(`bookmark-folder-${id}`, folder);
+  };
+
+  const handleCreateFolder = (name: string) => {
+    setBookmarkFolders(prev => [...prev, name]);
+  };
+
+  const handleRemoveBookmark = (id: string) => {
+    setSavedMessages(prev => { const next = new Set(prev); next.delete(id); return next; });
+  };
+
   if (isLoading) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-background">
@@ -967,6 +1291,7 @@ function App() {
         onJoin={handleJoin} 
         onGoogleLogin={handleGoogleLogin} 
         onEmailAuth={handleEmailAuth}
+        onPasswordReset={handlePasswordReset}
         isLoading={isLoading}
         onUsernameChange={setCurrentUser}
         currentUser={currentUser}
@@ -1015,6 +1340,7 @@ function App() {
           pinnedConversations={pinnedConversations}
           onPinConversation={handlePinConversation}
           onSetStatus={() => setShowStatusPicker(true)}
+          onLanguageSelect={() => setIsLanguageSelectorOpen(true)}
           currentUserStatus={userStatus}
           currentUserStatusText={userStatusText}
         />
@@ -1056,14 +1382,38 @@ function App() {
             users={users.map(u => ({ id: u.id, name: u.name, avatar: u.avatar }))}
             wallpaper={chatWallpaper || undefined}
             onReply={(msg) => { setReplyToMsg(msg); }}
+            onOpenThread={(msg) => { handleOpenThread(msg); }}
             onForward={(msg) => { setForwardMessage(msg); setForwardDialogOpen(true); }}
             onTranslate={(id, content) => {}}
             onSave={handleSaveMessage}
             savedMessages={savedMessages}
             onRemind={handleRemindMessage}
             typingUsers={typingUsers}
+            connectionStatus={connectionStatus}
+            draftMessage={messageDrafts[activeRoomId] || ''}
+            onDraftChange={(roomId, value) => {
+              setMessageDrafts(prev => {
+                const updated = { ...prev, [roomId]: value };
+                localStorage.setItem('chat-drafts', JSON.stringify(updated));
+                return updated;
+              });
+            }}
+            readReceipts={readReceipts}
+            hasMoreMessages={hasMoreMessages}
+            loadingMore={loadingMore}
+            onLoadMore={loadMoreMessages}
           />
         )}
+
+        {/* Thread Panel */}
+        <ThreadPanel
+          isOpen={isThreadOpen}
+          parentMessage={threadParentMessage ? { id: threadParentMessage.id, senderName: threadParentMessage.senderName, content: threadParentMessage.content } : null}
+          replies={threadReplies}
+          onClose={handleCloseThread}
+          onSendReply={handleSendThreadMessage}
+          currentUser={{ id: currentUserId || currentUser, name: currentUser, avatar: currentUserAvatar }}
+        />
 
         {activeNav === 'analytics' && <AnalyticsDashboard data={analytics} messagesCount={messages.length} activeUsers={onlineUsers} users={users} />}
 
@@ -1150,6 +1500,14 @@ function App() {
         onToggleVideo={handleToggleVideo}
         onToggleMute={handleToggleMute}
         onToggleSpeaker={handleToggleSpeaker}
+        onToggleScreenShare={async () => {
+          if (agora.isScreenSharing) {
+            await agora.stopScreenShare();
+          } else {
+            await agora.startScreenShare();
+          }
+        }}
+        isScreenSharing={agora.isScreenSharing}
         isMuted={isMuted}
         isVideoEnabled={isVideoEnabled}
         isSpeakerOn={isSpeakerOn}
@@ -1169,6 +1527,8 @@ function App() {
         currentStatus={userStatus}
         currentStatusText={userStatusText}
         onSetStatus={handleSetStatus}
+        autoReply={autoReplyMessage}
+        onSetAutoReply={setAutoReplyMessage}
       />
 
       {/* Message Reminder */}
@@ -1223,6 +1583,65 @@ function App() {
           if (id === 'new_chat') setIsAddContactOpen(true);
         }}
       />
+      <KeyboardShortcuts
+        isOpen={isKeyboardShortcutsOpen}
+        onClose={() => setIsKeyboardShortcutsOpen(false)}
+      />
+      <LanguageSelector
+        isOpen={isLanguageSelectorOpen}
+        onClose={() => setIsLanguageSelectorOpen(false)}
+      />
+
+      {/* GIF Picker */}
+      <GifPicker isOpen={showGifPicker} onSelect={handleGifSelect} onClose={() => setShowGifPicker(false)} />
+
+      {/* Translation Panel */}
+      <TranslationPanel
+        isOpen={showTranslationPanel}
+        currentText={translationText}
+        onTranslate={handleTranslate}
+        onClose={() => setShowTranslationPanel(false)}
+      />
+
+      {/* Admin Panel */}
+      {showAdminPanel && (
+        <AdminPanel
+          users={users}
+          rooms={rooms}
+          onDeleteUser={(userId) => { ws?.send(JSON.stringify({ type: 'admin:delete_user', userId })); }}
+          onDeleteRoom={(roomId) => { ws?.send(JSON.stringify({ type: 'admin:delete_room', roomId })); }}
+          onBroadcast={(message) => { ws?.send(JSON.stringify({ type: 'admin:broadcast', message, senderName: currentUser })); }}
+          onClose={() => setShowAdminPanel(false)}
+        />
+      )}
+
+      {/* Bookmark Folders */}
+      {showBookmarkFolders && (
+        <BookmarkFolders
+          bookmarks={Array.from(savedMessages).map(id => ({
+            id,
+            content: messages.find(m => m.id === id)?.content || '',
+            senderName: messages.find(m => m.id === id)?.senderName || '',
+            timestamp: messages.find(m => m.id === id)?.timestamp || new Date(),
+            folder: localStorage.getItem(`bookmark-folder-${id}`) || undefined,
+          }))}
+          folders={bookmarkFolders}
+          onRemoveBookmark={handleRemoveBookmark}
+          onMoveToFolder={handleMoveToFolder}
+          onCreateFolder={handleCreateFolder}
+          onClose={() => setShowBookmarkFolders(false)}
+        />
+      )}
+
+      {/* Message Effect indicator */}
+      {messageEffect !== 'none' && (
+        <div className="fixed bottom-24 right-4 z-50 flex items-center gap-2 px-3 py-1.5 bg-background/80 backdrop-blur-md border border-primary/30 text-[9px] uppercase tracking-widest text-primary font-bold">
+          Effect: {messageEffect}
+          <button onClick={() => setMessageEffect('none')} className="ml-2 text-muted-foreground hover:text-foreground">
+            <X size={12} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
