@@ -4,15 +4,20 @@ const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
   ],
+  iceCandidatePoolSize: 10,
 };
 
 interface WebRTCCallbacks {
-  onRemoteStream: (stream: MediaStream | null) => void;
-  onLocalStream: (stream: MediaStream | null) => void;
-  onConnectionState: (state: RTCPeerConnectionState) => void;
-  onError: (error: string) => void;
-}
+    onRemoteStream: (stream: MediaStream | null) => void;
+    onLocalStream: (stream: MediaStream | null) => void;
+    onConnectionState: (state: RTCPeerConnectionState) => void;
+    onError: (error: string) => void;
+    onCallInitiated?: (callId: string) => void;
+  }
 
 export function useWebRTC(callbacks: WebRTCCallbacks) {
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -80,8 +85,14 @@ export function useWebRTC(callbacks: WebRTCCallbacks) {
     pc.onconnectionstatechange = () => {
       setConnectionState(pc.connectionState);
       callbacks.onConnectionState(pc.connectionState);
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+      if (pc.connectionState === 'failed') {
         cleanup();
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'failed') {
+        pc.restartIce();
       }
     };
 
@@ -100,14 +111,6 @@ export function useWebRTC(callbacks: WebRTCCallbacks) {
 
     const pc = createPeerConnection(stream, ws, calleeId, 'pending', callerId);
 
-    ws.send(JSON.stringify({
-      type: 'call:initiate',
-      callerId,
-      calleeId,
-      callerName,
-      callType: video ? 'video' : 'audio',
-    }));
-
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
@@ -117,6 +120,9 @@ export function useWebRTC(callbacks: WebRTCCallbacks) {
       callId: 'pending',
       userId: callerId,
       data: pc.localDescription,
+      callerId,
+      callerName,
+      callType: video ? 'video' : 'audio',
     }));
 
     return pc;
@@ -185,6 +191,10 @@ export function useWebRTC(callbacks: WebRTCCallbacks) {
     cleanup();
   }, [cleanup]);
 
+  const updateCallId = useCallback((newCallId: string) => {
+    return newCallId;
+  }, []);
+
   const toggleMute = useCallback((): boolean | null => {
     if (localStreamRef.current) {
       const track = localStreamRef.current.getAudioTracks()[0];
@@ -224,5 +234,6 @@ export function useWebRTC(callbacks: WebRTCCallbacks) {
     handleRemoteDescription,
     handleIceCandidate,
     cleanup,
+    updateCallId,
   };
 }

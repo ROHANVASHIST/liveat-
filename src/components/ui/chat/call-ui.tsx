@@ -42,6 +42,7 @@ interface CallUIProps {
   isVideoEnabled: boolean;
   isSpeakerOn: boolean;
   callDuration: number;
+  callConnected: boolean;
   onMinimize?: () => void;
   isMinimized?: boolean;
   className?: string;
@@ -65,6 +66,7 @@ export const CallUI: React.FC<CallUIProps> = ({
   isVideoEnabled,
   isSpeakerOn,
   callDuration,
+  callConnected,
   onMinimize,
   isMinimized,
   className,
@@ -157,7 +159,7 @@ export const CallUI: React.FC<CallUIProps> = ({
         {/* Avatar */}
         <div className={cn(
           "relative mb-8",
-          callDirection === 'incoming' && callDuration === 0 && "animate-bounce"
+          callDirection === 'incoming' && !callConnected && "animate-bounce"
         )}>
           <div className={cn(
             "w-28 h-28 rounded-full border-4 flex items-center justify-center overflow-hidden",
@@ -171,7 +173,7 @@ export const CallUI: React.FC<CallUIProps> = ({
               </span>
             )}
           </div>
-          {callDirection === 'outgoing' && callDuration === 0 && (
+          {callDirection === 'outgoing' && !callConnected && (
             <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
               <span className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0s' }} />
               <span className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0.2s' }} />
@@ -185,12 +187,12 @@ export const CallUI: React.FC<CallUIProps> = ({
 
         {/* Status */}
         <p className="text-sm text-muted-foreground font-mono">
-          {callDirection === 'incoming' && callDuration === 0 ? (
+          {callDirection === 'incoming' && !callConnected ? (
             <span className="text-emerald-500 flex items-center gap-2">
               <Circle size={8} className="fill-emerald-500 animate-pulse" />
               Incoming Call...
             </span>
-          ) : callDirection === 'outgoing' && callDuration === 0 ? (
+          ) : callDirection === 'outgoing' && !callConnected ? (
             <span className="text-primary flex items-center gap-2">
               <Clock size={14} className="animate-pulse" />
               Calling...
@@ -246,7 +248,7 @@ export const CallUI: React.FC<CallUIProps> = ({
           </button>
 
           {/* Accept (incoming only) */}
-          {callDirection === 'incoming' && callDuration === 0 && (
+          {callDirection === 'incoming' && !callConnected && (
             <button
               onClick={onAccept}
               className={cn(
