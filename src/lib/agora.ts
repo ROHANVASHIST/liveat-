@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import AgoraRTC, {
   IAgoraRTCClient, ILocalAudioTrack, ILocalVideoTrack,
   IRemoteAudioTrack, IRemoteVideoTrack, UID,
@@ -22,8 +22,10 @@ export function useAgora(callbacks?: AgoraCallbacks) {
   const clientRef = useRef<IAgoraRTCClient | null>(null);
   const localAudioTrackRef = useRef<ILocalAudioTrack | null>(null);
   const localVideoTrackRef = useRef<ILocalVideoTrack | null>(null);
+  const screenVideoTrackRef = useRef<ILocalVideoTrack | [ILocalVideoTrack, ILocalAudioTrack] | null>(null);
   const remoteTracksRef = useRef<Map<UID, RemoteUserTracks>>(new Map());
   const joinedRef = useRef(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
 
   useEffect(() => {
     const client = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
@@ -47,7 +49,7 @@ export function useAgora(callbacks?: AgoraCallbacks) {
         tracks.video = user.videoTrack ?? undefined;
       }
       remoteTracksRef.current.set(user.uid, tracks);
-      callbacks?.onRemoteTrackReady?.(user.uid, mediaType);
+      callbacks?.onRemoteTrackReady?.(user.uid, mediaType as 'audio' | 'video');
     });
 
     client.on('user-unpublished', (user, mediaType) => {
@@ -105,10 +107,21 @@ export function useAgora(callbacks?: AgoraCallbacks) {
 
     localAudioTrackRef.current?.close();
     localVideoTrackRef.current?.close();
+    if (screenVideoTrackRef.current) {
+      const screenTrack = screenVideoTrackRef.current;
+      if (Array.isArray(screenTrack)) {
+        screenTrack[0]?.close();
+        screenTrack[1]?.close();
+      } else {
+        screenTrack.close();
+      }
+    }
     localAudioTrackRef.current = null;
     localVideoTrackRef.current = null;
+    screenVideoTrackRef.current = null;
 
     remoteTracksRef.current.clear();
+    setIsScreenSharing(false);
 
     await clientRef.current?.leave();
   }, []);
@@ -139,12 +152,66 @@ export function useAgora(callbacks?: AgoraCallbacks) {
     return track.enabled;
   }, []);
 
+  const startScreenShare = useCallback(async () => {
+    if (!clientRef.current || !joinedRef.current) return false;
+    try {
+      const screenTrack = await AgoraRTC.createScreenVideoTrack({}, 'auto');
+      screenVideoTrackRef.current = screenTrack;
+
+      if (localVideoTrackRef.current) {
+        await clientRef.current.unpublish(localVideoTrackRef.current);
+        localVideoTrackRef.current.stop();
+        localVideoTrackRef.current.close();
+        localVideoTrackRef.current = null;
+      }
+
+      const trackToPublish = Array.isArray(screenTrack) ? screenTrack[0] : screenTrack;
+      await clientRef.current.publish(trackToPublish);
+      trackToPublish.play('local-video-container');
+      setIsScreenSharing(true);
+      return true;
+    } catch (err: any) {
+      callbacks?.onError?.(`Screen share failed: ${err.message}`);
+      return false;
+    }
+  }, []);
+
+  const stopScreenShare = useCallback(async () => {
+    if (!clientRef.current || !joinedRef.current || !screenVideoTrackRef.current) return;
+    try {
+      const screenTrack = screenVideoTrackRef.current;
+      if (Array.isArray(screenTrack)) {
+        await clientRef.current.unpublish(screenTrack[0]);
+        screenTrack[0].close();
+        screenTrack[1]?.close();
+      } else {
+        await clientRef.current.unpublish(screenTrack);
+        screenTrack.close();
+      }
+      screenVideoTrackRef.current = null;
+
+      const videoTrack = await AgoraRTC.createCameraVideoTrack({
+        facingMode: 'user',
+        encoderConfig: '480p',
+      });
+      localVideoTrackRef.current = videoTrack;
+      await clientRef.current.publish(videoTrack);
+      videoTrack.play('local-video-container');
+      setIsScreenSharing(false);
+    } catch (err: any) {
+      callbacks?.onError?.(`Failed to stop screen share: ${err.message}`);
+    }
+  }, []);
+
   return {
     joinChannel,
     leaveChannel,
     playRemoteTrack,
     toggleMic,
     toggleCamera,
+    startScreenShare,
+    stopScreenShare,
+    isScreenSharing,
     joinedRef,
   };
 }

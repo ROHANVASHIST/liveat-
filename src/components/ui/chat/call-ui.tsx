@@ -17,7 +17,8 @@ import {
   Users,
   X,
   Circle,
-  Clock
+  Clock,
+  Plus
 } from 'lucide-react';
 
 interface CallUser {
@@ -38,6 +39,8 @@ interface CallUIProps {
   onToggleVideo: () => void;
   onToggleMute: () => void;
   onToggleSpeaker: () => void;
+  onToggleScreenShare?: () => void;
+  isScreenSharing?: boolean;
   isMuted: boolean;
   isVideoEnabled: boolean;
   isSpeakerOn: boolean;
@@ -45,6 +48,8 @@ interface CallUIProps {
   callConnected: boolean;
   onMinimize?: () => void;
   isMinimized?: boolean;
+  remoteParticipants?: Array<{ id: string; name: string }>;
+  onAddParticipant?: () => void;
   className?: string;
 }
 
@@ -60,6 +65,8 @@ export const CallUI: React.FC<CallUIProps> = ({
   onToggleVideo,
   onToggleMute,
   onToggleSpeaker,
+  onToggleScreenShare,
+  isScreenSharing = false,
   isMuted,
   isVideoEnabled,
   isSpeakerOn,
@@ -67,8 +74,12 @@ export const CallUI: React.FC<CallUIProps> = ({
   callConnected,
   onMinimize,
   isMinimized,
+  remoteParticipants = [],
+  onAddParticipant,
   className,
 }) => {
+  const [showParticipants, setShowParticipants] = useState(false);
+
   const formatDuration = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
@@ -96,6 +107,9 @@ export const CallUI: React.FC<CallUIProps> = ({
           <p className="text-[8px] text-muted-foreground flex items-center gap-1">
             <Circle size={6} className="fill-green-500 text-green-500 animate-pulse" />
             {formatDuration(callDuration)}
+            {remoteParticipants.length > 0 && (
+              <span className="ml-1">+{remoteParticipants.length}</span>
+            )}
           </p>
         </div>
         <button onClick={(e) => { e.stopPropagation(); onEnd(); }} className="h-7 w-7 bg-red-500/20 border border-red-500/30 flex items-center justify-center hover:bg-red-500/30">
@@ -105,32 +119,42 @@ export const CallUI: React.FC<CallUIProps> = ({
     );
   }
 
+  const allParticipants = [callee, ...remoteParticipants];
+  const gridCols = allParticipants.length <= 2 ? 1 : allParticipants.length <= 4 ? 2 : 3;
+
   return (
     <div className={cn(
       "fixed inset-0 z-50 flex flex-col bg-background",
       className
     )}>
-      {/* Remote video background (only when video is visible) */}
+      {/* Remote video grid */}
       {isVideo && isVideoEnabled && (
-        <div className="absolute inset-0 bg-black" />
+        <div className="absolute inset-0 bg-black">
+          <div className={cn(
+            "w-full h-full grid gap-1 p-1",
+            gridCols === 1 ? "grid-cols-1" : gridCols === 2 ? "grid-cols-2" : "grid-cols-3"
+          )}>
+            {allParticipants.map((p, i) => (
+              <div
+                key={p.id}
+                id={`remote-video-container-${i}`}
+                className="relative bg-black/50 rounded overflow-hidden"
+              >
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-2xl font-bold text-white/30">{p.name?.charAt(0) || '?'}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
-      {/* Remote Video - Agora renders its own <video> inside this container */}
-      <div
-        id="remote-video-container"
-        className={cn(
-          isVideo && isVideoEnabled
-            ? "absolute inset-0 w-full h-full"
-            : "absolute w-0 h-0"
-        )}
-      />
-
-      {/* Remote video gradient overlay (only when video is visible) */}
+      {/* Gradient overlay */}
       {isVideo && isVideoEnabled && (
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30 pointer-events-none" />
       )}
 
-      {/* Local Video (PiP overlay) - Agora renders its own <video> inside this container */}
+      {/* Local Video (PiP) */}
       {isVideo && isVideoEnabled && (
         <div
           id="local-video-container"
@@ -145,8 +169,23 @@ export const CallUI: React.FC<CallUIProps> = ({
         </div>
       )}
 
-      {/* Minimize button */}
+      {/* Top buttons */}
       <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+        {/* Participants */}
+        {callConnected && (
+          <button
+            onClick={() => setShowParticipants(!showParticipants)}
+            className={cn(
+              "h-10 px-3 backdrop-blur border flex items-center gap-2 text-[9px] uppercase tracking-widest font-bold transition-all",
+              showParticipants
+                ? "bg-primary/20 border-primary/30 text-primary"
+                : "bg-background/60 border-border text-foreground hover:bg-background/80"
+            )}
+          >
+            <Users size={14} />
+            <span>{allParticipants.length}</span>
+          </button>
+        )}
         <button
           onClick={onMinimize}
           className="h-10 w-10 bg-background/60 backdrop-blur border border-border flex items-center justify-center hover:bg-background/80 transition-all text-foreground"
@@ -163,59 +202,92 @@ export const CallUI: React.FC<CallUIProps> = ({
         </button>
       </div>
 
-      {/* Caller/Callee Info */}
-      <div className="flex-1 flex flex-col items-center justify-center relative z-10 px-6">
-        {/* Avatar */}
-        <div className={cn(
-          "relative mb-8",
-          callDirection === 'incoming' && !callConnected && "animate-bounce"
-        )}>
-          <div className={cn(
-            "w-28 h-28 rounded-full border-4 flex items-center justify-center overflow-hidden",
-            isVideo ? "border-primary/50" : "border-emerald-500/50"
-          )}>
-            {callee.avatar ? (
-              <img src={callee.avatar} alt="" className="w-full h-full object-cover" />
-            ) : (
-              <span className="text-4xl font-bold text-foreground">
-                {callee.name.charAt(0).toUpperCase()}
-              </span>
-            )}
+      {/* Participants panel */}
+      {showParticipants && callConnected && (
+        <div className="absolute top-20 right-4 z-20 w-56 bg-background border border-border shadow-lg">
+          <div className="p-3 border-b border-border">
+            <span className="text-[9px] uppercase tracking-widest font-bold">Participants ({allParticipants.length})</span>
           </div>
-          {callDirection === 'outgoing' && !callConnected && (
-            <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
-              <span className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0s' }} />
-              <span className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0.2s' }} />
-              <span className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0.4s' }} />
+          <div className="p-2 space-y-1 max-h-[200px] overflow-y-auto">
+            {allParticipants.map((p, i) => (
+              <div key={p.id} className="flex items-center gap-2 px-2 py-1.5 text-[9px] uppercase tracking-wider">
+                <div className={cn(
+                  "h-5 w-5 rounded-full flex items-center justify-center text-[6px] font-bold",
+                  i === 0 ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
+                )}>
+                  {p.name?.charAt(0) || '?'}
+                </div>
+                <span className="flex-1 truncate">{p.name}</span>
+                {i === 0 && <span className="text-[7px] text-primary">Host</span>}
+              </div>
+            ))}
+          </div>
+          {onAddParticipant && (
+            <div className="p-2 border-t border-border">
+              <button
+                onClick={onAddParticipant}
+                className="w-full flex items-center justify-center gap-2 py-1.5 text-[8px] uppercase tracking-wider text-muted-foreground hover:text-primary border border-dashed border-border hover:border-primary/30 transition-colors"
+              >
+                <Plus size={10} /> Add Participant
+              </button>
             </div>
           )}
         </div>
+      )}
 
-        {/* Name */}
-        <h2 className="text-2xl font-bold text-foreground tracking-wide mb-2">{callee.name}</h2>
+      {/* Caller/Callee Info */}
+      <div className="flex-1 flex flex-col items-center justify-center relative z-10 px-6">
+        {(!isVideo || !isVideoEnabled) && (
+          <>
+            <div className={cn(
+              "relative mb-8",
+              callDirection === 'incoming' && !callConnected && "animate-bounce"
+            )}>
+              <div className={cn(
+                "w-28 h-28 rounded-full border-4 flex items-center justify-center overflow-hidden",
+                isVideo ? "border-primary/50" : "border-emerald-500/50"
+              )}>
+                {callee.avatar ? (
+                  <img src={callee.avatar} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-4xl font-bold text-foreground">
+                    {callee.name.charAt(0).toUpperCase()}
+                  </span>
+                )}
+              </div>
+              {callDirection === 'outgoing' && !callConnected && (
+                <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
+                  <span className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0s' }} />
+                  <span className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0.2s' }} />
+                  <span className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0.4s' }} />
+                </div>
+              )}
+            </div>
 
-        {/* Status */}
-        <p className="text-sm text-muted-foreground font-mono">
-          {callDirection === 'incoming' && !callConnected ? (
-            <span className="text-emerald-500 flex items-center gap-2">
-              <Circle size={8} className="fill-emerald-500 animate-pulse" />
-              Incoming Call...
-            </span>
-          ) : callDirection === 'outgoing' && !callConnected ? (
-            <span className="text-primary flex items-center gap-2">
-              <Clock size={14} className="animate-pulse" />
-              Calling...
-            </span>
-          ) : (
-            <span className="text-muted-foreground">{formatDuration(callDuration)}</span>
-          )}
-        </p>
+            <h2 className="text-2xl font-bold text-foreground tracking-wide mb-2">{callee.name}</h2>
+
+            <p className="text-sm text-muted-foreground font-mono">
+              {callDirection === 'incoming' && !callConnected ? (
+                <span className="text-emerald-500 flex items-center gap-2">
+                  <Circle size={8} className="fill-emerald-500 animate-pulse" />
+                  Incoming Call...
+                </span>
+              ) : callDirection === 'outgoing' && !callConnected ? (
+                <span className="text-primary flex items-center gap-2">
+                  <Clock size={14} className="animate-pulse" />
+                  Calling...
+                </span>
+              ) : (
+                <span className="text-muted-foreground">{formatDuration(callDuration)}</span>
+              )}
+            </p>
+          </>
+        )}
       </div>
 
       {/* Call Controls */}
       <div className="relative z-10 pb-12 px-6">
         <div className="flex items-center justify-center gap-6">
-          {/* Mute */}
           <button
             onClick={onToggleMute}
             className={cn(
@@ -228,7 +300,6 @@ export const CallUI: React.FC<CallUIProps> = ({
             {isMuted ? <MicOff size={22} /> : <Mic size={22} />}
           </button>
 
-          {/* Video Toggle */}
           {isVideo && (
             <button
               onClick={onToggleVideo}
@@ -243,7 +314,6 @@ export const CallUI: React.FC<CallUIProps> = ({
             </button>
           )}
 
-          {/* Speaker */}
           <button
             onClick={onToggleSpeaker}
             className={cn(
@@ -256,7 +326,21 @@ export const CallUI: React.FC<CallUIProps> = ({
             {isSpeakerOn ? <Volume2 size={22} /> : <VolumeX size={22} />}
           </button>
 
-          {/* Accept (incoming only) */}
+          {callConnected && onToggleScreenShare && (
+            <button
+              onClick={onToggleScreenShare}
+              className={cn(
+                "h-14 w-14 rounded-full flex items-center justify-center transition-all border",
+                isScreenSharing
+                  ? "bg-primary/20 border-primary/30 text-primary"
+                  : "bg-background/60 backdrop-blur border-border text-foreground hover:bg-background/80"
+              )}
+              title={isScreenSharing ? "Stop sharing" : "Share screen"}
+            >
+              <Monitor size={22} />
+            </button>
+          )}
+
           {callDirection === 'incoming' && !callConnected && (
             <button
               onClick={onAccept}
@@ -271,7 +355,6 @@ export const CallUI: React.FC<CallUIProps> = ({
             </button>
           )}
 
-          {/* End Call */}
           <button
             onClick={onEnd}
             className="h-14 w-14 rounded-full bg-red-500 border border-red-400 flex items-center justify-center hover:bg-red-600 transition-all"
