@@ -13,7 +13,8 @@ import {
   Users,
   Search,
   Circle,
-  Clock
+  Clock,
+  Languages
 } from 'lucide-react';
 
 interface ChatUser {
@@ -52,6 +53,7 @@ interface ChatListProps {
   onSetStatus?: () => void;
   currentUserStatus?: string;
   currentUserStatusText?: string;
+  onLanguageSelect?: () => void;
 }
 
 const getRelativeTime = (date: Date): string => {
@@ -85,6 +87,7 @@ export const ChatList: React.FC<ChatListProps> = ({
   pinnedConversations = new Set(),
   onPinConversation,
   onSetStatus,
+  onLanguageSelect,
   currentUserStatus = 'online',
   currentUserStatusText = '',
 }) => {
@@ -401,17 +404,26 @@ export const ChatList: React.FC<ChatListProps> = ({
                 currentUserStatus === 'online' ? "bg-green-500" : currentUserStatus === 'away' ? "bg-amber-500" : currentUserStatus === 'busy' ? "bg-red-500" : "bg-muted-foreground"
               )} />
            </Avatar>
-           <div className="flex-1 min-w-0">
-             <p className="text-[10px] font-bold text-foreground truncate uppercase tracking-widest">{currentUserData?.name || 'You'}</p>
-             <p className="text-[8px] text-primary uppercase tracking-[0.2em] mt-0.5 flex items-center gap-1">
-               {currentUserStatusText ? (
-                 <span className="normal-case tracking-normal truncate max-w-[120px]">{currentUserStatusText}</span>
-               ) : (
-                 <>{currentUserStatus === 'online' ? 'Online' : currentUserStatus === 'away' ? 'Away' : currentUserStatus === 'busy' ? 'Busy' : 'Offline'}</>
-               )}
-             </p>
-           </div>
-           {onSetStatus && (
+          <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-bold text-foreground truncate uppercase tracking-widest">{currentUserData?.name || 'You'}</p>
+              <p className="text-[8px] text-primary uppercase tracking-[0.2em] mt-0.5 flex items-center gap-1">
+                {currentUserStatusText ? (
+                  <span className="normal-case tracking-normal truncate max-w-[120px]">{currentUserStatusText}</span>
+                ) : (
+                  <>{currentUserStatus === 'online' ? 'Online' : currentUserStatus === 'away' ? 'Away' : currentUserStatus === 'busy' ? 'Busy' : 'Offline'}</>
+                )}
+              </p>
+            </div>
+            {onLanguageSelect && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onLanguageSelect(); }}
+                className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-primary border border-transparent hover:border-border transition-all shrink-0"
+                title="Language"
+              >
+                <Languages size={10} />
+              </button>
+            )}
+            {onSetStatus && (
              <button
                onClick={(e) => { e.stopPropagation(); onSetStatus(); }}
                className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-primary border border-transparent hover:border-border transition-all shrink-0"

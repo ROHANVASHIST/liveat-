@@ -14,3 +14,4 @@ export { ReactionBar } from './reaction-bar';
 export { DragDropOverlay } from './drag-drop-overlay';
 export { UserStatusPicker } from './user-status-picker';
 export { MessageReminder, ReminderNotification } from './message-reminder';
+export { ThreadPanel } from './thread-panel';
