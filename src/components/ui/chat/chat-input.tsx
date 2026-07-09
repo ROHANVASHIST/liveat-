@@ -8,7 +8,8 @@ import {
   Wand,
   Smile,
   X,
-  AtSign
+  AtSign,
+  Sticker
 } from 'lucide-react';
 import { MentionInput } from './mention-input';
 import { CustomEmojiPicker } from '../custom-emoji-picker';
@@ -39,6 +40,7 @@ interface ChatInputProps {
   replyTo?: Message | null;
   onCancelReply?: () => void;
   onEmojiSelect?: (emoji: string) => void;
+  onStickerSelect?: (url: string) => void;
   users?: MentionUser[];
 }
 
@@ -55,6 +57,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   isPolishing,
   replyTo,
   onCancelReply,
+  onStickerSelect,
   onEmojiSelect,
   users = [],
 }) => {
@@ -202,6 +205,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     }}
                   />
                 </div>
+              )}
+              {onStickerSelect && (
+                <button
+                  onClick={() => onStickerSelect('')}
+                  className="h-10 w-10 flex items-center justify-center transition-all border text-muted-foreground border-transparent hover:border-border"
+                  title="Stickers"
+                >
+                  <Sticker size={16} />
+                </button>
               )}
               <button
                 onClick={onSend}

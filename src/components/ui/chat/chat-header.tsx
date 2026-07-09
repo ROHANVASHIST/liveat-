@@ -12,7 +12,11 @@ import {
   Download,
   Info,
   PanelRightOpen,
-  Circle
+  Circle,
+  Search,
+  BarChart3,
+  MessageSquare,
+  Sticker,
 } from 'lucide-react';
 
 interface ChatHeaderProps {
@@ -35,6 +39,10 @@ interface ChatHeaderProps {
   onVideoCall?: () => void;
   onViewStatus?: () => void;
   hasStatus?: boolean;
+  onSearchClick?: () => void;
+  onStatsClick?: () => void;
+  onQuickReplyClick?: () => void;
+  onStickerSelect?: (url: string) => void;
 }
 
 export const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -56,6 +64,10 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   onVideoCall,
   onViewStatus,
   hasStatus,
+  onSearchClick,
+  onStatsClick,
+  onQuickReplyClick,
+  onStickerSelect,
 }) => {
   const [showMenu, setShowMenu] = React.useState(false);
 
@@ -180,17 +192,50 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
          )}
 
          {/* Search toggle button */}
-         {onSearchToggle && (
-           <button
-             onClick={onSearchToggle}
-             className="h-9 w-9 border border-border flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-             title="Search messages"
-           >
-             <PanelRightOpen size={14} />
-           </button>
-         )}
+          {onSearchToggle && (
+            <button
+              onClick={onSearchToggle}
+              className="h-9 w-9 border border-border flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+              title="Search messages"
+            >
+              <PanelRightOpen size={14} />
+            </button>
+          )}
 
-         {/* More Menu */}
+          {/* Advanced search */}
+          {onSearchClick && (
+            <button
+              onClick={onSearchClick}
+              className="h-9 w-9 border border-border flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+              title="Advanced search"
+            >
+              <Search size={14} />
+            </button>
+          )}
+
+          {/* Chat stats */}
+          {onStatsClick && (
+            <button
+              onClick={onStatsClick}
+              className="h-9 w-9 border border-border flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+              title="Chat statistics"
+            >
+              <BarChart3 size={14} />
+            </button>
+          )}
+
+          {/* Quick replies */}
+          {onQuickReplyClick && (
+            <button
+              onClick={onQuickReplyClick}
+              className="h-9 w-9 border border-border flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+              title="Quick replies"
+            >
+              <MessageSquare size={14} />
+            </button>
+          )}
+
+          {/* More Menu */}
          <div className="relative">
            <button
              onClick={() => setShowMenu(!showMenu)}

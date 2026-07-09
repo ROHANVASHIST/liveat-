@@ -26,6 +26,8 @@ import {
   Phone,
   Video as VideoIcon,
   MessageSquare,
+  Paintbrush,
+  Check,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -104,6 +106,37 @@ export const ChatInfoPanel: React.FC<ChatInfoPanelProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'media' | 'files' | 'links'>('media');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showWallpaperPicker, setShowWallpaperPicker] = useState(false);
+
+  const WALLPAPER_PRESETS = [
+    { id: 'none', label: 'None', className: '' },
+    { id: 'gradient-dark', label: 'Dark', className: 'bg-gradient-to-br from-zinc-900 via-zinc-800 to-zinc-900' },
+    { id: 'gradient-blue', label: 'Blue', className: 'bg-gradient-to-br from-blue-950 via-slate-900 to-indigo-950' },
+    { id: 'gradient-purple', label: 'Purple', className: 'bg-gradient-to-br from-purple-950 via-violet-900 to-fuchsia-950' },
+    { id: 'gradient-green', label: 'Green', className: 'bg-gradient-to-br from-emerald-950 via-teal-900 to-green-950' },
+    { id: 'grid-pattern', label: 'Grid', className: 'bg-[linear-gradient(rgba(255,255,255,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[length:20px_20px] bg-zinc-900' },
+  ];
+
+  const currentRoomWallpaper = (() => {
+    try {
+      const all = JSON.parse(localStorage.getItem('room-wallpapers') || '{}');
+      return all[chatInfo.name] || '';
+    } catch { return ''; }
+  })();
+
+  const handleSelectPreset = (presetId: string) => {
+    try {
+      const all = JSON.parse(localStorage.getItem('room-wallpapers') || '{}');
+      if (presetId === 'none') {
+        delete all[chatInfo.name];
+      } else {
+        const preset = WALLPAPER_PRESETS.find(p => p.id === presetId);
+        all[chatInfo.name] = preset?.className || '';
+      }
+      localStorage.setItem('room-wallpapers', JSON.stringify(all));
+      setShowWallpaperPicker(false);
+    } catch {}
+  };
 
   const mediaCount = chatInfo.media?.length || 0;
   const documentCount = chatInfo.media?.filter(m => m.type === 'document').length || 0;
@@ -298,15 +331,48 @@ export const ChatInfoPanel: React.FC<ChatInfoPanelProps> = ({
 
             {/* Settings */}
             <div className="space-y-1">
-              {onSetWallpaper && (
+              <div>
                 <button
-                  onClick={onSetWallpaper}
+                  onClick={() => setShowWallpaperPicker(!showWallpaperPicker)}
                   className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-secondary transition-colors"
                 >
-                  <svg className="w-5 h-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
-                  <span className="text-sm">Chat wallpaper</span>
+                  <Paintbrush className="w-5 h-5 text-muted-foreground" />
+                  <span className="text-sm flex-1">Chat wallpaper</span>
+                  {currentRoomWallpaper && (
+                    <span className="text-xs text-primary font-medium uppercase tracking-wider">Active</span>
+                  )}
                 </button>
-              )}
+                {showWallpaperPicker && (
+                  <div className="mt-2 p-3 bg-secondary/50 rounded-lg space-y-2">
+                    <div className="text-xs text-muted-foreground mb-2 uppercase tracking-wider font-medium">Presets</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {WALLPAPER_PRESETS.map(preset => (
+                        <button
+                          key={preset.id}
+                          onClick={() => handleSelectPreset(preset.id)}
+                          className={cn(
+                            'aspect-video rounded border-2 transition-all overflow-hidden flex items-center justify-center relative',
+                            currentRoomWallpaper === preset.className || (!currentRoomWallpaper && preset.id === 'none')
+                              ? 'border-primary'
+                              : 'border-border hover:border-primary/50'
+                          )}
+                        >
+                          <div className={cn('w-full h-full absolute inset-0', preset.className)} />
+                          <span className={cn(
+                            'text-[8px] uppercase tracking-wider font-bold relative z-10',
+                            preset.id === 'none' ? 'text-muted-foreground' : 'text-white/80'
+                          )}>
+                            {preset.label}
+                          </span>
+                          {(currentRoomWallpaper === preset.className || (!currentRoomWallpaper && preset.id === 'none')) && (
+                            <Check size={10} className="absolute top-1 right-1 text-primary z-10" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
               
               {onToggleMute && (
                 <button

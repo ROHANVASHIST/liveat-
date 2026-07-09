@@ -116,6 +116,11 @@ interface ChatRoomProps {
   hasMoreMessages?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
+  onStickerSelect?: (url: string) => void;
+  onSearchClick?: () => void;
+  onStatsClick?: () => void;
+  onQuickReplyClick?: () => void;
+  searchedMessages?: any[] | null;
 }
 
 export const ChatRoom: React.FC<ChatRoomProps> = ({
@@ -167,6 +172,11 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
   hasMoreMessages = true,
   loadingMore = false,
   onLoadMore,
+  onStickerSelect,
+  onSearchClick,
+  onStatsClick,
+  onQuickReplyClick,
+  searchedMessages,
 }) => {
   const [isMuted, setIsMuted] = React.useState(false);
   const [muteDuration, setMuteDuration] = React.useState<string | null>(null);
@@ -259,6 +269,9 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
 
   const filteredMessages = React.useMemo(() => {
     let result = messages;
+    if (searchedMessages) {
+      return searchedMessages;
+    }
     if (searchQuery) {
       result = result.filter(m =>
         m.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -273,7 +286,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
       result = result.filter(m => m.isPinned);
     }
     return result;
-  }, [messages, searchQuery, activeFilter]);
+  }, [messages, searchQuery, activeFilter, searchedMessages]);
 
   const mediaCount = React.useMemo(() => messages.filter(m => m.type === 'image').length, [messages]);
   const fileCount = React.useMemo(() => messages.filter(m => m.type === 'file').length, [messages]);
@@ -308,8 +321,18 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
     scrollToBottom();
   }, [messages]);
 
-  const chatBgStyle = wallpaper ? {
-    backgroundImage: `url(${wallpaper})`,
+  const roomWallpapers = React.useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem('room-wallpapers') || '{}');
+    } catch { return {}; }
+  }, [messages]);
+
+  const resolvedWallpaper = roomWallpapers[roomName] || wallpaper;
+
+  const chatBgStyle = resolvedWallpaper ? {
+    backgroundImage: resolvedWallpaper.startsWith('#') || resolvedWallpaper.startsWith('linear-gradient') || resolvedWallpaper.startsWith('radial-gradient')
+      ? resolvedWallpaper
+      : `url(${resolvedWallpaper})`,
     backgroundSize: 'cover',
     backgroundPosition: 'center',
   } : {};
@@ -336,6 +359,10 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
         onViewStatus={onViewStatus}
         hasStatus={hasStatus}
         typingUserNames={typingUsers}
+        onSearchClick={onSearchClick}
+        onStatsClick={onStatsClick}
+        onQuickReplyClick={onQuickReplyClick}
+        onStickerSelect={onStickerSelect}
       />
 
       {/* Connection Status Bar */}
@@ -483,8 +510,8 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
           className="flex-1 flex flex-col min-w-0 relative"
           style={chatBgStyle}
         >
-          {!wallpaper && <div className="scan-line opacity-20" />}
-          {wallpaper && <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" />}
+          {!resolvedWallpaper && <div className="scan-line opacity-20" />}
+          {resolvedWallpaper && <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" />}
 
           {/* Reply-to Indicator */}
           {replyTo && (
@@ -715,6 +742,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
             onPolish={onPolish}
             isPolishing={isPolishing}
             onEmojiSelect={onEmojiSelect}
+            onStickerSelect={onStickerSelect}
             replyTo={replyTo ? { id: replyTo.id, senderId: '', senderName: replyTo.senderName, content: replyTo.content } : null}
             onCancelReply={onCancelReply}
             users={users}
