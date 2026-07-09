@@ -1,6 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from '../avatar';
 import { cn } from '@/lib/utils';
+import { DndContext, closestCenter, DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { 
   MessageSquare,
   BarChart3,
@@ -14,7 +18,8 @@ import {
   Search,
   Circle,
   Clock,
-  Languages
+  Languages,
+  GripVertical
 } from 'lucide-react';
 
 interface ChatUser {
@@ -97,6 +102,24 @@ export const ChatList: React.FC<ChatListProps> = ({
   const currentUserData = users.find(u => u.id === currentUserId);
   const onlineCount = users.filter(u => u.status === 'online').length;
 
+  const STORAGE_KEY = 'chat-list-order';
+
+  const getInitialOrder = useCallback(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return null;
+  }, []);
+
+  const [roomOrder, setRoomOrder] = useState<string[] | null>(getInitialOrder);
+
+  useEffect(() => {
+    if (roomOrder) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(roomOrder));
+    }
+  }, [roomOrder]);
+
   const mainNav = [
     { id: 'messages', label: 'Chat', icon: MessageSquare },
     { id: 'analytics', label: 'Monitor', icon: BarChart3 },
@@ -111,6 +134,57 @@ export const ChatList: React.FC<ChatListProps> = ({
 
   const onlineUsers = filteredUsers.filter(u => u.status === 'online');
   const offlineUsers = filteredUsers.filter(u => u.status !== 'online');
+
+  const orderedRooms = useMemo(() => {
+    if (!roomOrder || roomOrder.length === 0) return filteredRooms;
+    const orderMap = new Map(roomOrder.map((id, idx) => [id, idx]));
+    return [...filteredRooms].sort((a, b) => {
+      const ai = orderMap.get(a.id);
+      const bi = orderMap.get(b.id);
+      if (ai !== undefined && bi !== undefined) return ai - bi;
+      if (ai !== undefined) return -1;
+      if (bi !== undefined) return 1;
+      return 0;
+    });
+  }, [filteredRooms, roomOrder]);
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const items = sidebarSection === 'rooms'
+      ? orderedRooms.map(r => r.id)
+      : [...onlineUsers, ...offlineUsers].map(u => u.id);
+
+    const oldIndex = items.indexOf(active.id as string);
+    const newIndex = items.indexOf(over.id as string);
+
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const newItems = [...items];
+    newItems.splice(oldIndex, 1);
+    newItems.splice(newIndex, 0, active.id as string);
+    setRoomOrder(newItems);
+  }, [sidebarSection, orderedRooms, onlineUsers, offlineUsers]);
+
+  const SortableItem = ({ id, children }: { id: string; children: React.ReactNode }) => {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+    const style = {
+      transform: CSS.Transform.toString(transform),
+      transition,
+      opacity: isDragging ? 0.4 : 1,
+      position: 'relative' as const,
+      zIndex: isDragging ? 10 : 1,
+    };
+    return (
+      <div ref={setNodeRef} style={style} {...attributes} {...listeners} className="group/sortable">
+        {children}
+      </div>
+    );
+  };
+
+  const roomIds = orderedRooms.map(r => r.id);
+  const contactIds = [...onlineUsers, ...offlineUsers].map(u => u.id);
 
   return (
     <div className="flex h-full flex-col bg-card border-r border-border relative overflow-hidden font-mono">
@@ -235,31 +309,37 @@ export const ChatList: React.FC<ChatListProps> = ({
                   </p>
                 </div>
               ) : (
-                filteredRooms.map(room => {
-                  const unread = roomUnreadCounts[room.id] || 0;
-                  return (
-                    <button 
-                      key={room.id} 
-                      className={cn(
-                        "w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest transition-all border",
-                        currentRoomId === room.id && !activeChatUserId
-                          ? "bg-muted/50 border-primary/30 text-foreground" 
-                          : "text-muted-foreground border-transparent hover:bg-muted/20"
-                      )}
-                      onClick={() => onSelectRoom(room.id)}
-                    >
-                       <Hash size={12} className={cn(currentRoomId === room.id && !activeChatUserId ? "text-primary" : "text-muted-foreground opacity-50")} />
-                       <span className="flex-1 text-left truncate">{room.name}</span>
-                       {unread > 0 && (
-                         <span className="flex items-center gap-1">
-                           <Circle size={8} className="fill-primary text-primary" />
-                           <span className="text-[8px] text-primary font-bold">{unread}</span>
-                         </span>
-                       )}
-                       {currentRoomId === room.id && !activeChatUserId && <div className="h-1.5 w-1.5 bg-primary rounded-full shadow-[0_0_5px_hsl(var(--primary))]" />}
-                    </button>
-                  );
-                })
+                <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd} modifiers={[restrictToVerticalAxis]}>
+                  <SortableContext items={roomIds} strategy={verticalListSortingStrategy}>
+                    {orderedRooms.map(room => {
+                      const unread = roomUnreadCounts[room.id] || 0;
+                      return (
+                        <SortableItem key={room.id} id={room.id}>
+                          <button 
+                            className={cn(
+                              "w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest transition-all border",
+                              currentRoomId === room.id && !activeChatUserId
+                                ? "bg-muted/50 border-primary/30 text-foreground" 
+                                : "text-muted-foreground border-transparent hover:bg-muted/20"
+                            )}
+                            onClick={() => onSelectRoom(room.id)}
+                          >
+                             <GripVertical size={10} className="text-muted-foreground/30 group-hover/sortable:text-muted-foreground/60 transition-colors shrink-0" />
+                             <Hash size={12} className={cn(currentRoomId === room.id && !activeChatUserId ? "text-primary" : "text-muted-foreground opacity-50")} />
+                             <span className="flex-1 text-left truncate">{room.name}</span>
+                             {unread > 0 && (
+                               <span className="flex items-center gap-1">
+                                 <Circle size={8} className="fill-primary text-primary" />
+                                 <span className="text-[8px] text-primary font-bold">{unread}</span>
+                               </span>
+                             )}
+                             {currentRoomId === room.id && !activeChatUserId && <div className="h-1.5 w-1.5 bg-primary rounded-full shadow-[0_0_5px_hsl(var(--primary))]" />}
+                          </button>
+                        </SortableItem>
+                      );
+                    })}
+                  </SortableContext>
+                </DndContext>
               )
             ) : (
               filteredUsers.length === 0 ? (
@@ -269,121 +349,127 @@ export const ChatList: React.FC<ChatListProps> = ({
                   </p>
                 </div>
               ) : (
-                <>
-                  {onlineUsers.map(user => (
-                    <button 
-                      key={user.id} 
-                      className={cn(
-                        "w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest transition-all border",
-                        activeChatUserId === user.id 
-                          ? "bg-muted/50 border-primary/30 text-foreground" 
-                          : "text-muted-foreground border-transparent hover:bg-muted/20"
-                      )}
-                      onClick={() => onSelectUser(user.id)}
-                    >
-                       <div
-                         className="relative shrink-0 cursor-pointer"
-                         onClick={(e) => { e.stopPropagation(); onStatusClick?.(user.id); }}
-                       >
-                           <div className={cn(
-                             "h-7 w-7 rounded-full overflow-hidden",
-                             "border-2",
-                             statusUsers.includes(user.id) ? "border-primary" : "border-border"
-                           )}>
-                             <Avatar className="h-full w-full rounded-none">
-                               <AvatarImage src={user.avatar} className="object-cover" />
-                               <AvatarFallback className="text-[8px] bg-muted rounded-none">{user.name ? user.name[0] : 'U'}</AvatarFallback>
-                             </Avatar>
-                           </div>
-                           <span className={cn(
-                             "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card",
-                             user.status === 'online' ? "status-online" : user.status === 'away' ? "status-away" : "status-offline"
-                           )} />
-                        </div>
-                        <div className="flex-1 min-w-0 text-left">
-                          <span className="block truncate">{user.name}</span>
-                          {typingUsers.includes(user.id) ? (
-                            <span className="flex items-center gap-1 mt-0.5">
-                              <span className="text-[8px] text-primary italic normal-case tracking-normal">typing</span>
-                              <span className="typing-dot" />
-                              <span className="typing-dot" />
-                              <span className="typing-dot" />
-                            </span>
-                          ) : user.lastMessage ? (
-                            <span className="block text-[8px] text-muted-foreground truncate mt-0.5 normal-case tracking-normal">{user.lastMessage}</span>
-                          ) : null}
-                        </div>
-                        {!typingUsers.includes(user.id) && user.lastMessageTime ? (
-                          <span className="flex items-center gap-1 shrink-0">
-                            <Clock size={8} className="text-muted-foreground/50" />
-                            <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">{getRelativeTime(user.lastMessageTime)}</span>
-                          </span>
-                        ) : user.status === 'online' && !typingUsers.includes(user.id) ? (
-                          <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">Online</span>
-                        ) : null}
-                    </button>
-                  ))}
-                  {onlineUsers.length > 0 && offlineUsers.length > 0 && (
-                    <div className="flex items-center gap-2 px-3 py-1">
-                      <div className="flex-1 h-px bg-border/50" />
-                      <span className="text-[7px] uppercase tracking-widest text-muted-foreground/40 shrink-0">Offline</span>
-                      <div className="flex-1 h-px bg-border/50" />
-                    </div>
-                  )}
-                  {offlineUsers.map(user => (
-                    <button 
-                      key={user.id} 
-                      className={cn(
-                        "w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest transition-all border",
-                        activeChatUserId === user.id 
-                          ? "bg-muted/50 border-primary/30 text-foreground" 
-                          : "text-muted-foreground border-transparent hover:bg-muted/20"
-                      )}
-                      onClick={() => onSelectUser(user.id)}
-                    >
-                       <div
-                         className="relative shrink-0 cursor-pointer"
-                         onClick={(e) => { e.stopPropagation(); onStatusClick?.(user.id); }}
-                       >
-                           <div className={cn(
-                             "h-7 w-7 rounded-full overflow-hidden",
-                             "border-2",
-                             statusUsers.includes(user.id) ? "border-primary" : "border-border"
-                           )}>
-                             <Avatar className="h-full w-full rounded-none">
-                               <AvatarImage src={user.avatar} className="object-cover" />
-                               <AvatarFallback className="text-[8px] bg-muted rounded-none">{user.name ? user.name[0] : 'U'}</AvatarFallback>
-                             </Avatar>
-                           </div>
-                           <span className={cn(
-                             "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card",
-                             user.status === 'online' ? "status-online" : user.status === 'away' ? "status-away" : "status-offline"
-                           )} />
-                        </div>
-                        <div className="flex-1 min-w-0 text-left">
-                          <span className="block truncate">{user.name}</span>
-                          {typingUsers.includes(user.id) ? (
-                            <span className="flex items-center gap-1 mt-0.5">
-                              <span className="text-[8px] text-primary italic normal-case tracking-normal">typing</span>
-                              <span className="typing-dot" />
-                              <span className="typing-dot" />
-                              <span className="typing-dot" />
-                            </span>
-                          ) : user.lastMessage ? (
-                            <span className="block text-[8px] text-muted-foreground truncate mt-0.5 normal-case tracking-normal">{user.lastMessage}</span>
-                          ) : null}
-                        </div>
-                        {!typingUsers.includes(user.id) && user.lastMessageTime ? (
-                          <span className="flex items-center gap-1 shrink-0">
-                            <Clock size={8} className="text-muted-foreground/50" />
-                            <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">{getRelativeTime(user.lastMessageTime)}</span>
-                          </span>
-                        ) : user.status === 'online' && !typingUsers.includes(user.id) ? (
-                          <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">Online</span>
-                        ) : null}
-                    </button>
-                  ))}
-                </>
+                <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd} modifiers={[restrictToVerticalAxis]}>
+                  <SortableContext items={contactIds} strategy={verticalListSortingStrategy}>
+                    {onlineUsers.map(user => (
+                      <SortableItem key={user.id} id={user.id}>
+                        <button 
+                          className={cn(
+                            "w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest transition-all border",
+                            activeChatUserId === user.id 
+                              ? "bg-muted/50 border-primary/30 text-foreground" 
+                              : "text-muted-foreground border-transparent hover:bg-muted/20"
+                          )}
+                          onClick={() => onSelectUser(user.id)}
+                        >
+                           <GripVertical size={10} className="text-muted-foreground/30 group-hover/sortable:text-muted-foreground/60 transition-colors shrink-0" />
+                           <div
+                             className="relative shrink-0 cursor-pointer"
+                             onClick={(e) => { e.stopPropagation(); onStatusClick?.(user.id); }}
+                           >
+                               <div className={cn(
+                                 "h-7 w-7 rounded-full overflow-hidden",
+                                 "border-2",
+                                 statusUsers.includes(user.id) ? "border-primary" : "border-border"
+                               )}>
+                                 <Avatar className="h-full w-full rounded-none">
+                                   <AvatarImage src={user.avatar} className="object-cover" />
+                                   <AvatarFallback className="text-[8px] bg-muted rounded-none">{user.name ? user.name[0] : 'U'}</AvatarFallback>
+                                 </Avatar>
+                               </div>
+                               <span className={cn(
+                                 "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card",
+                                 user.status === 'online' ? "status-online" : user.status === 'away' ? "status-away" : "status-offline"
+                               )} />
+                            </div>
+                            <div className="flex-1 min-w-0 text-left">
+                              <span className="block truncate">{user.name}</span>
+                              {typingUsers.includes(user.id) ? (
+                                <span className="flex items-center gap-1 mt-0.5">
+                                  <span className="text-[8px] text-primary italic normal-case tracking-normal">typing</span>
+                                  <span className="typing-dot" />
+                                  <span className="typing-dot" />
+                                  <span className="typing-dot" />
+                                </span>
+                              ) : user.lastMessage ? (
+                                <span className="block text-[8px] text-muted-foreground truncate mt-0.5 normal-case tracking-normal">{user.lastMessage}</span>
+                              ) : null}
+                            </div>
+                            {!typingUsers.includes(user.id) && user.lastMessageTime ? (
+                              <span className="flex items-center gap-1 shrink-0">
+                                <Clock size={8} className="text-muted-foreground/50" />
+                                <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">{getRelativeTime(user.lastMessageTime)}</span>
+                              </span>
+                            ) : user.status === 'online' && !typingUsers.includes(user.id) ? (
+                              <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">Online</span>
+                            ) : null}
+                        </button>
+                      </SortableItem>
+                    ))}
+                    {onlineUsers.length > 0 && offlineUsers.length > 0 && (
+                      <div className="flex items-center gap-2 px-3 py-1">
+                        <div className="flex-1 h-px bg-border/50" />
+                        <span className="text-[7px] uppercase tracking-widest text-muted-foreground/40 shrink-0">Offline</span>
+                        <div className="flex-1 h-px bg-border/50" />
+                      </div>
+                    )}
+                    {offlineUsers.map(user => (
+                      <SortableItem key={user.id} id={user.id}>
+                        <button 
+                          className={cn(
+                            "w-full flex items-center gap-3 px-3 py-2.5 text-[10px] uppercase tracking-widest transition-all border",
+                            activeChatUserId === user.id 
+                              ? "bg-muted/50 border-primary/30 text-foreground" 
+                              : "text-muted-foreground border-transparent hover:bg-muted/20"
+                          )}
+                          onClick={() => onSelectUser(user.id)}
+                        >
+                           <GripVertical size={10} className="text-muted-foreground/30 group-hover/sortable:text-muted-foreground/60 transition-colors shrink-0" />
+                           <div
+                             className="relative shrink-0 cursor-pointer"
+                             onClick={(e) => { e.stopPropagation(); onStatusClick?.(user.id); }}
+                           >
+                               <div className={cn(
+                                 "h-7 w-7 rounded-full overflow-hidden",
+                                 "border-2",
+                                 statusUsers.includes(user.id) ? "border-primary" : "border-border"
+                               )}>
+                                 <Avatar className="h-full w-full rounded-none">
+                                   <AvatarImage src={user.avatar} className="object-cover" />
+                                   <AvatarFallback className="text-[8px] bg-muted rounded-none">{user.name ? user.name[0] : 'U'}</AvatarFallback>
+                                 </Avatar>
+                               </div>
+                               <span className={cn(
+                                 "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card",
+                                 user.status === 'online' ? "status-online" : user.status === 'away' ? "status-away" : "status-offline"
+                               )} />
+                            </div>
+                            <div className="flex-1 min-w-0 text-left">
+                              <span className="block truncate">{user.name}</span>
+                              {typingUsers.includes(user.id) ? (
+                                <span className="flex items-center gap-1 mt-0.5">
+                                  <span className="text-[8px] text-primary italic normal-case tracking-normal">typing</span>
+                                  <span className="typing-dot" />
+                                  <span className="typing-dot" />
+                                  <span className="typing-dot" />
+                                </span>
+                              ) : user.lastMessage ? (
+                                <span className="block text-[8px] text-muted-foreground truncate mt-0.5 normal-case tracking-normal">{user.lastMessage}</span>
+                              ) : null}
+                            </div>
+                            {!typingUsers.includes(user.id) && user.lastMessageTime ? (
+                              <span className="flex items-center gap-1 shrink-0">
+                                <Clock size={8} className="text-muted-foreground/50" />
+                                <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">{getRelativeTime(user.lastMessageTime)}</span>
+                              </span>
+                            ) : user.status === 'online' && !typingUsers.includes(user.id) ? (
+                              <span className="text-[7px] text-muted-foreground uppercase tracking-widest opacity-50">Online</span>
+                            ) : null}
+                        </button>
+                      </SortableItem>
+                    ))}
+                  </SortableContext>
+                </DndContext>
               )
             )}
           </div>
