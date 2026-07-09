@@ -11,6 +11,7 @@ import {
   AtSign
 } from 'lucide-react';
 import { MentionInput } from './mention-input';
+import { CustomEmojiPicker } from '../custom-emoji-picker';
 
 interface Message {
   id: string;
@@ -193,19 +194,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   >
                     <Smile size={16} />
                   </button>
-                  {showEmojiPicker && (
-                    <div className="absolute bottom-full right-0 mb-2 p-2 border border-border bg-background shadow-lg grid grid-cols-6 gap-1 z-50">
-                      {EMOJI_LIST.map((emoji) => (
-                        <button
-                          key={emoji}
-                          onClick={() => handleEmojiClick(emoji)}
-                          className="h-8 w-8 flex items-center justify-center text-base hover:bg-primary/10 border border-transparent hover:border-primary/30 transition-all"
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  <CustomEmojiPicker
+                    isOpen={showEmojiPicker}
+                    onClose={() => setShowEmojiPicker(false)}
+                    onEmojiSelect={(emoji) => {
+                      handleEmojiClick(emoji.startsWith('data:') ? '🖼️' : emoji);
+                    }}
+                  />
                 </div>
               )}
               <button
