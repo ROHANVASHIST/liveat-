@@ -97,6 +97,11 @@ interface ChatRoomProps {
   wallpaper?: string;
   onReply?: (message: Message) => void;
   onForward?: (message: Message) => void;
+  onTranslate?: (messageId: string, content: string) => void;
+  onSave?: (messageId: string, content: string, senderName: string, roomId: string) => void;
+  savedMessages?: Set<string>;
+  onRemind?: (messageId: string, content: string, senderName: string) => void;
+  typingUsers?: string[];
 }
 
 export const ChatRoom: React.FC<ChatRoomProps> = ({
@@ -135,6 +140,11 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
   wallpaper,
   onReply,
   onForward,
+  onTranslate,
+  onSave,
+  savedMessages,
+  onRemind,
+  typingUsers = [],
 }) => {
   const [isMuted, setIsMuted] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -258,6 +268,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
         onVideoCall={onVideoCall}
         onViewStatus={onViewStatus}
         hasStatus={hasStatus}
+        typingUserNames={typingUsers}
       />
 
       {/* Pinned Messages Bar */}
@@ -466,6 +477,10 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({
                         onPin={() => onPinMessage?.(message.id)}
                         onReply={onReply ? () => onReply(message) : undefined}
                         onForward={onForward ? () => onForward(message) : undefined}
+                        onTranslate={onTranslate}
+                        onSave={onSave ? (id, content, senderName) => onSave(id, content, senderName, roomName) : undefined}
+                        isSaved={savedMessages?.has(message.id)}
+                        onRemind={onRemind}
                       />
                     ))}
                   </React.Fragment>
